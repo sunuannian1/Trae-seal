@@ -107,6 +107,8 @@ struct SigningCertificateSettingsView: View {
                 if let account = activeAccount {
                     Divider()
                     detailRow("Team", TeamNameDisplayFormatter.string(from: account.teamName))
+                    Divider()
+                    detailRow("Team ID", account.teamID.isEmpty ? "—" : account.teamID)
                 }
             }
         }
@@ -137,7 +139,7 @@ struct SigningCertificateSettingsView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.88)
                 Spacer(minLength: 12)
-                Text(certificateSummary(health, serial: account.certificateSerialNumber))
+                Text(certificateSummary(health))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(certificateSummaryColor(health))
                     .padding(.horizontal, 10)
@@ -211,14 +213,10 @@ struct SigningCertificateSettingsView: View {
         .accessibilityLabel("\(title)，\(value)")
     }
 
-    private func certificateSummary(_ health: CertificateHealthStatus?, serial: String?) -> String {
+    private func certificateSummary(_ health: CertificateHealthStatus?) -> String {
         guard let health else { return "检查中" }
-        if health.expirationState == .invalid { return "已过期" }
-        // 只要有证书序列号就显示具体名称，状态用颜色区分
-        if let serial, serial.isEmpty == false {
-            return AppSigningPresentationHelpers.certificateName(serial: serial)
-        }
-        return health.isUsable ? "可用" : "不可用"
+        if health.expirationState == .invalid { return "无效" }
+        return health.isUsable ? "可用" : "无效"
     }
 
     private func certificateSummaryColor(_ health: CertificateHealthStatus?) -> Color {

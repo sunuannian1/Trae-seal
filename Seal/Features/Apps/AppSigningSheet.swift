@@ -231,6 +231,7 @@ struct AppSigningSheet: View {
                     ForEach(viewModel.verifiedAccounts) { account in
                         Button(accountPickerTitle(account)) {
                             selectedAccountID = account.id
+                            regenerateBundleIDForAccountChange(account: account)
                             Task { await viewModel.selectActiveAccount(id: account.id) }
                         }
                     }
@@ -265,10 +266,7 @@ struct AppSigningSheet: View {
                 .frame(width: 96, alignment: .leading)
                 .layoutPriority(1)
 
-            HighlightedBundleIDText(value: value)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
+            SealBundleIDSingleLineText(value: value)
                 .frame(maxWidth: .infinity, alignment: .trailing)
 
             if showsDisclosure {
@@ -380,16 +378,16 @@ struct AppSigningSheet: View {
 
     /// 切换 Apple ID 后，全新未签且未手动改过 Bundle ID 的，用新账号 teamID 重算推荐 Bundle ID，
     /// 使 `.seal.<TeamID>` 跟随所选账号变化；已签/已安装/Seal 自身不动（Bundle ID 已注册）。
-    private func regenerateBundleIDForAccountChange() {
+    private func regenerateBundleIDForAccountChange(account: AppleAccountRecord) {
         guard isRenewal == false else { return }
         guard workingApp.belongsInInstalledList == false,
               workingApp.belongsInSignedList == false,
               workingApp.isSeal == false else { return }
         guard hasUserEditedBundleID == false else { return }
-        if let teamID = selectedAccount?.teamID, teamID.isEmpty == false {
+        if account.teamID.isEmpty == false {
             targetBundleID = BundleIDPolicy.recommendedBundleIdentifier(
                 for: workingApp.originalBundleIdentifier,
-                teamID: teamID
+                teamID: account.teamID
             )
         } else {
             targetBundleID = BundleIDPolicy.recommendedBundleIdentifier(
@@ -420,12 +418,7 @@ struct AppSigningSheet: View {
     }
 
     private func accountPickerTitle(_ account: AppleAccountRecord) -> String {
-        let email = viewModelFullEmail(for: account)
-        if let serial = account.certificateSerialNumber, serial.isEmpty == false {
-            let compact = AppSigningPresentationHelpers.compactSerial(serial)
-            return "\(email) · \(compact)"
-        }
-        return "\(email) · 无证书"
+        viewModelFullEmail(for: account)
     }
 
     private var certificateSummary: String {
@@ -518,16 +511,29 @@ struct AppSigningSheet: View {
 }
 
 
-private struct HighlightedBundleIDText: View {
+private struct SealBundleIDSingleLineText: View {
     let value: String
 
     var body: some View {
-        BundleIDSealHighlighter.text(
-            value,
-            baseColor: Color.sealTextSecondary,
-            highlightColor: Color.sealAccent
-        )
+        let parts = BundleIDSealHighlighter.split(value)
+        HStack(spacing: 0) {
+            if let prefix = parts.prefix {
+                Text(prefix)
+                    .foregroundColor(Color.sealTextSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            if let suffix = parts.suffix {
+                BundleIDSealHighlighter.text(
+                    suffix,
+                    baseColor: Color.sealTextSecondary,
+                    highlightColor: Color.sealAccent
+                )
+                .layoutPriority(1)
+            }
+        }
         .font(.system(size: 13, weight: .regular, design: .monospaced))
+        .textSelection(.enabled)
     }
 }
 
@@ -615,6 +621,18 @@ private enum BundleIDSealHighlighter {
         .font: uiFont,
         .foregroundColor: UIColor.secondaryLabel
     ]
+
+    /// 把 Bundle ID 拆成「.seal 之前」与「.seal 及之后（含 TeamID）」两段，
+    /// 用于签名页单行显示：前缀可省略、后缀（.seal+TeamID）完整显示。
+    /// 无 .seal 时整串作为 prefix 返回，suffix 为 nil。
+    static func split(_ value: String) -> (prefix: String?, suffix: String?) {
+        guard let range = value.range(of: marker, options: [.caseInsensitive]) else {
+            return (value.isEmpty ? nil : value, nil)
+        }
+        let prefix = String(value[..<range.lowerBound])
+        let suffix = String(value[range.lowerBound...])
+        return (prefix.isEmpty ? nil : prefix, suffix)
+    }
 
     static func text(
         _ value: String,
