@@ -178,7 +178,7 @@ struct AppFileStoreTests {
             _ = try await store.pendingImportTransactions()
             Issue.record("Expected corrupt transaction journal to fail explicitly")
         } catch let failure as ImportFailure {
-            #expect(failure.code == "SEAL-IPA-RECOVERY-003")
+            #expect(failure.code == "SEAL-IPA-215")
         }
     }
 

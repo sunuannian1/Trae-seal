@@ -459,13 +459,13 @@ actor ImportWorkflow {
         title: "临时文件清理失败",
         reason: "导入产生的临时文件未能完整删除。",
         recovery: "稍后在存储维护中重试清理",
-        code: "SEAL-STORAGE-IMPORT-001"
+        code: "SEAL-STORAGE-003"
     )
 
     private static let rollbackRecoveryFailure = ImportFailure(
         title: "导入恢复未完成",
         reason: "本次导入未能完全回滚。Seal 已保留恢复记录，下次启动时会继续恢复。",
-        recovery: "重新打开 Seal 后再重试",
+        recovery: "下次启动 Seal 会自动继续恢复，无需手动重试",
         code: "SEAL-IPA-ROLLBACK-001"
     )
 
@@ -473,8 +473,8 @@ actor ImportWorkflow {
         ImportFailure(
             title: "导入提交待恢复",
             reason: "IPA 文件已经提交，但后续状态保存未完成。Seal 已保留恢复记录，下次启动时会继续完成。",
-            recovery: "重新打开 Seal 后检查应用状态",
-            code: original.code == "SEAL-IPA-205" ? "SEAL-IPA-RECOVERY-001" : original.code
+            recovery: "下次启动 Seal 会自动继续完成，无需手动重试",
+            code: original.code == "SEAL-IPA-205" ? "SEAL-IPA-213" : original.code
         )
     }
 }

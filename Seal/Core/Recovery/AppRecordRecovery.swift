@@ -113,8 +113,8 @@ actor AppRecordRecovery {
             throw ImportFailure(
                 title: "本地事务恢复未完成",
                 reason: "有 \(failedTransactionCount) 个 IPA 文件事务仍需恢复，恢复记录已保留。",
-                recovery: "重新打开 Seal 后重试",
-                code: "SEAL-IPA-RECOVERY-002"
+                recovery: "下次启动 Seal 会自动继续恢复",
+                code: "SEAL-IPA-214"
             )
         }
     }

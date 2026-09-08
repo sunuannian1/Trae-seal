@@ -241,18 +241,25 @@
 | STORAGE/LOG/NOTIFY/HISTORY | STORAGE-001a/002/SELF-001、LOG-001、NOTIFY-002a/002b、HISTORY-001/003 | 已改 | reason 补 domain+code；recovery 补通知权限/配对指引；HISTORY-004/004a/005/006 reason 已具象、未动 |
 | UI/应用层 | APP-001/002/003、BUNDLE-003、CUSTOM-002/003、SET-001、INSTALL-707、INVENTORY-900/900a | 已改 | reason 补 app 名/domain+code；APP-001 recovery 补重启指引；INSTALL-707 补配对指引 |
 
-### P2
+### P2（已改，待 Xcode 编译 + 真机回归）
 
-| 批次 | 状态 | 备注 |
+| 项 | 状态 | 备注 |
 |---|---|---|
-| P2（code 命名规范化 / 结构性缺失） | 待改 | AnisetteError、SignedArtifactValidator 结构补全；STORAGE-IMPORT-002/APPID-LIMIT 等 code 规范化 |
+| SIGN-404 撞号 | 已改 | 「签名临时空间不足」SEAL-SIGN-404 → SEAL-SIGN-405；「应用记录未找到」保留 SEAL-SIGN-404 |
+| APPID-LIMIT 无序号 | 已改 | SEAL-APPID-LIMIT → SEAL-APPID-305 |
+| STORAGE-IMPORT 模块段多词 | 已改 | SEAL-STORAGE-IMPORT-001/002 → SEAL-STORAGE-003/004 |
+| IPA-RECOVERY 模块段多词 | 已改 | SEAL-IPA-RECOVERY-001/002/003/004 → SEAL-IPA-213/214/215/216（测试同步更新） |
+| ROLLBACK/RECOVERY recovery 补「自动继续」 | 已改 | IPA-ROLLBACK-001 与 IPA-213~216 的 recovery 统一改为「下次启动 Seal 会自动继续…」，不再要求手动重试 |
+| AnisetteError 结构评估 | 结论：不改 | 内部错误类型，仅本地 ODA 链路抛出，经 AnisetteV3Client 包裹为 ANI-114（中文主文案），英文 errorDescription 仅作补充细节透出；17 个 case 不必各自建 SEAL code |
+| SignedArtifactValidator 结构评估 | 结论：不改 | 纯验证谓词（reason+code）；消费方 SigningCoordinator 已补 title「安装前验证失败」+ recovery「重新签名后再安装」，无用户可见缺口 |
 
 ### 自查对照（本次改动涉及的新 code 唯一性）
 
-- 新增/改动 code：`AUTH-114`、`ANI-115`、`SIGN-503`、`PROFILE-305`、`INSTALL-702d`、`INSTALL-719`、`AUTH-107a`（归一）。
+- 新增/改动 code：`AUTH-114`、`ANI-115`、`SIGN-503`、`SIGN-405`、`PROFILE-305`、`INSTALL-702d`、`INSTALL-719`、`APPID-305`、`STORAGE-003/004`、`IPA-213~216`、`AUTH-107a`（归一）。
+- P2 code 重命名已 `rg` 复核：旧字面量 `SEAL-STORAGE-IMPORT-*`、`SEAL-IPA-RECOVERY-*`、`SEAL-APPID-LIMIT` 在 Seal/SealTests 源码中不再出现；`SEAL-SIGN-404` 仅剩「应用记录未找到」一处（SigningCoordinator），存储不足已改 `SEAL-SIGN-405`。
 - 均已 `rg` 复核：`SEAL-INSTALL-710` 仅剩 Minimuxer 一处；`SEAL-AUTH-107` 仅剩会话过期语义（ApplePortalSigningService 44/270 + SettingsViewModel 865 消费）；无 code 撞号。
 
-## 7. 说明（本次 P0 落地后）
+## 7. 说明
 
-- 已完成的 P0 改动均为「文案字符串 + code 字面量」级修改，未改控制流，无新增 Swift/Rust 调用，无编译风险点。
+- 已完成的 P0/P1/P2 改动均为「文案字符串 + code 字面量」级修改，未改控制流，无新增 Swift/Rust 调用，无编译风险点（P2 的 code 重命名已同步更新测试 `AppFileStoreTests.swift`）。
 - 仍须在 Xcode 编译 RustBridge + 真机回归样本（微信 / 黄豆短剧 / LCSign / lanmanga）验证报错路径显示正确。

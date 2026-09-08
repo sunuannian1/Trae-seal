@@ -407,7 +407,7 @@ actor ApplePortalSigningService {
                                 title: "存储空间不足",
                                 reason: String(format: "签名此 IPA 约需 %.1fGB 临时空间，当前剩余 %.1fGB。大 IPA 解压、签名、打包各需一份副本。", requiredGB, freeGB),
                                 recovery: "清理手机存储空间后重试",
-                                code: "SEAL-SIGN-404"
+                                code: "SEAL-SIGN-405"
                             )
                         }
                     }
@@ -977,7 +977,7 @@ actor ApplePortalSigningService {
                     title: "App ID 数量不足",
                     reason: "当前 Apple ID 已有 \(existing.count) 个 App ID（上限 \(maximumFreeAppIDs)），连主 App 都无法创建。",
                     recovery: "最早的 App ID 将于 \(expirationText) 过期，过期后可重试；或使用其他 Apple ID 签名。",
-                    code: "SEAL-APPID-LIMIT"
+                    code: "SEAL-APPID-305"
                 )
             }
             // 扩展数量不足时，后面 Phase 1 会自动跳过签不了的扩展，只签主 App

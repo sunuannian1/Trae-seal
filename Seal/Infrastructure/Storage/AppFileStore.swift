@@ -928,7 +928,7 @@ actor AppFileStore {
             title: "临时文件清理失败",
             reason: reason,
             recovery: "稍后在存储维护中重试清理",
-            code: "SEAL-STORAGE-IMPORT-002"
+            code: "SEAL-STORAGE-004"
         )
     }
 
@@ -936,8 +936,8 @@ actor AppFileStore {
         ImportFailure(
             title: "导入事务恢复未完成",
             reason: reason,
-            recovery: "重新打开 Seal 后重试；如持续失败请复制诊断日志",
-            code: "SEAL-IPA-RECOVERY-003"
+            recovery: "下次启动 Seal 会自动继续恢复；如持续失败请复制诊断日志",
+            code: "SEAL-IPA-215"
         )
     }
 
@@ -945,8 +945,8 @@ actor AppFileStore {
         ImportFailure(
             title: "签名包恢复未完成",
             reason: reason,
-            recovery: "保留当前文件并重新打开 Seal；如持续失败请复制诊断日志",
-            code: "SEAL-IPA-RECOVERY-004"
+            recovery: "保留当前文件，下次启动 Seal 会自动继续恢复；如持续失败请复制诊断日志",
+            code: "SEAL-IPA-216"
         )
     }
 
