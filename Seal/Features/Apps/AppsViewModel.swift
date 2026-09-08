@@ -1442,6 +1442,9 @@ final class AppsViewModel: ObservableObject {
                 },
                 onCertificateResolved: { [weak self] serialNumber in
                     await self?.updateResolvedCertificateSerialNumber(serialNumber)
+                },
+                onInstallProgress: { [weak self] progress in
+                    await self?.updateInstallProgress(progress)
                 }
             )
             let action: SigningHistoryRecord.Action = isRenewal ? .renew : .sign

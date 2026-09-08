@@ -38,7 +38,9 @@ actor SigningCoordinator {
         progress: @Sendable (SigningStage) async -> Void,
         // 证书序列号一旦确定（复用缓存或新申请）即回传，供 UI 显示真实证书，
         // 避免只持有“签名开始时快照”而在失败回看时误显示“证书未准备”。
-        onCertificateResolved: @Sendable @escaping (String) async -> Void = { _ in }
+        onCertificateResolved: @Sendable @escaping (String) async -> Void = { _ in },
+        // 安装阶段 IPC 传输进度（0-1），透传到 InstallChannel 的上传回调。
+        onInstallProgress: @escaping @Sendable (Double) async -> Void = { _ in }
     ) async throws -> AppRecord {
         guard var app = try await appStore.fetchAll().first(where: { $0.id == appID }) else {
             throw Self.failure(
@@ -225,7 +227,8 @@ actor SigningCoordinator {
                 signedPath: signedPath,
                 bundleIdentifier: portalResult.mappedMainBundleID,
                 expirationDate: portalResult.expirationDate,
-                progress: progress
+                progress: progress,
+                onInstallProgress: onInstallProgress
             )
             return installed
         } catch is CancellationError {
@@ -375,7 +378,8 @@ actor SigningCoordinator {
                 signedPath: signedPath,
                 bundleIdentifier: bundleIdentifier,
                 expirationDate: expirationDate,
-                progress: progress
+                progress: progress,
+                onInstallProgress: onInstallProgress
             )
         } catch let failure as ImportFailure {
             app.state = app.state == .installed ? .installed : .signed
@@ -497,7 +501,8 @@ actor SigningCoordinator {
         targetBundleIdentifier: String,
         certificateSerialNumber: String?,
         deviceIdentifier: String,
-        progress: @Sendable (SigningStage) async -> Void
+        progress: @Sendable (SigningStage) async -> Void,
+        onInstallProgress: @escaping @Sendable (Double) async -> Void = { _ in }
     ) async throws -> AppRecord? {
         guard let signedPath = app.signedIPARelativePath,
               let expectedSHA256 = app.signedIPASHA256,
@@ -539,7 +544,8 @@ actor SigningCoordinator {
         signedPath: String,
         bundleIdentifier: String,
         expirationDate: Date,
-        progress: @Sendable (SigningStage) async -> Void
+        progress: @Sendable (SigningStage) async -> Void,
+        onInstallProgress: @escaping @Sendable (Double) async -> Void = { _ in }
     ) async throws -> AppRecord {
         var updated = app
         // 安装期间申请后台保活，防止锁屏/切后台时 iOS 挂起网络连接
