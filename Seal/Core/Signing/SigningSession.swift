@@ -21,6 +21,8 @@ struct SigningSession: Identifiable, Equatable, Sendable {
     let completionMode: SigningCompletionMode
     var allowsDroppingExtensions: Bool
     var status: Status
+    /// 上传安装阶段的真实进度（0-1），仅 `.pushing` 阶段由安装通道 AFC 上传回传。
+    var installProgress: Double?
 
     init(
         id: UUID = UUID(),

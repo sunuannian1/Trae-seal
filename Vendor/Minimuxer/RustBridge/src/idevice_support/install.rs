@@ -155,12 +155,29 @@ pub(crate) async fn stage_via_afc(
         .await
         .map_err(|e| ctx(e, "yeet/打开暂存包"))?;
 
-    // 底层已按 1MiB 自动分块；非空才写（空文件理论上不会出现在 IPA 中，但双保险）
     if !ipa_bytes.is_empty() {
-        handle
-            .write_all(ipa_bytes)
-            .await
-            .map_err(|e| ctx(IdeviceError::Socket(e), "yeet/写入暂存包"))?;
+        // 对齐上游 jas install_ipa：分块写入并在每块后按已写字节折算为 0-100 上报。
+        // 底层 AFC 本就按 1MiB 自动分块，这里只为了让大 IPA 传输阶段有可见进度
+        // （带宽不变，纯进度反馈），并避免一次性整块写入占住内存。
+        let total = ipa_bytes.len();
+        let chunk = (total / 20).max(256 * 1024);
+        let mut written = 0usize;
+        let mut last_pct = 0u64;
+        for piece in ipa_bytes.chunks(chunk) {
+            handle
+                .write_all(piece)
+                .await
+                .map_err(|e| ctx(IdeviceError::Socket(e), "yeet/写入暂存包"))?;
+            written += piece.len();
+            let pct = (written * 100 / total) as u64;
+            if pct > last_pct {
+                upload_cb(pct);
+                last_pct = pct;
+            }
+        }
+        if last_pct < 100 {
+            upload_cb(100);
+        }
     }
 
     // close 显式刷写；afc 仍可继续用于回读校验

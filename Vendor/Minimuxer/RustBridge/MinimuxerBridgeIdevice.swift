@@ -232,6 +232,43 @@ public class RustIdevice {
 		try rustIdeviceThrowIfNeeded(error)
 	}
 
+	/// 带 AFC 上传进度的合并安装（0-1）。回调在 Rust 上传线程触发，Swift 负责换算与持有。
+	public static func stageAndInstall(
+		bundleId: String,
+		ipaBytes: Data,
+		progress: @escaping (Double) -> Void
+	) throws {
+		let ipaLength = try rustIdeviceCheckedLength(ipaBytes.count)
+		let box = ProgressCallbackBox(handler: progress)
+		let ctx = Unmanaged.passRetained(box).toOpaque()
+		defer { Unmanaged<ProgressCallbackBox>.fromOpaque(ctx).release() }
+
+		let error = ipaBytes.withUnsafeBytes { buffer in
+			_rust_bridge_idevice_stage_and_install_with_callback(
+				bundleId,
+				buffer.bindMemory(to: UInt8.self).baseAddress,
+				ipaLength,
+				progressTrampoline,
+				UInt(bitPattern: ctx)
+			)
+		}
+
+		try rustIdeviceThrowIfNeeded(error)
+	}
+
+	/// 承接 Rust 上传线程回传的 0-100，统一换算为 0-1 后回调上层。
+	private static let progressTrampoline: @convention(c) (UInt64, UnsafeMutableRawPointer?) -> Void = { pct, ctx in
+		guard let ctx else { return }
+		let box = Unmanaged<ProgressCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
+		box.handler(Double(pct) / 100.0)
+	}
+
+	/// 作为不透明上下文传给 Rust 的回调容器，持有上层进度闭包。
+	private final class ProgressCallbackBox {
+		let handler: (Double) -> Void
+		init(handler: @escaping (Double) -> Void) { self.handler = handler }
+	}
+
 	/// OTA：生成本地 HTTPS 证书（自签根 + 服务器叶子），返回 JSON（ca_pem/cert_pem/key_pem）
 	public static func otaIdentityGenerate() throws -> String {
 		guard let ptr = _rust_bridge_ota_identity_generate() else {

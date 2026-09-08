@@ -228,6 +228,15 @@ public struct Minimuxer {
         try RustIdevice.stageAndInstall(bundleId: bundleId, ipaBytes: ipaBytes)
     }
 
+    /// 带 AFC 上传进度（0-1）的合并调用，供 UI 展示真实传输百分比。
+    public static func stageAndInstall(
+        bundleId: String,
+        ipaBytes: Data,
+        progress: @escaping (Double) -> Void
+    ) throws {
+        try RustIdevice.stageAndInstall(bundleId: bundleId, ipaBytes: ipaBytes, progress: progress)
+    }
+
     public static func removeApp(bundleId: String) throws {
         try Install.removeApp(bundleId: bundleId)
     }

@@ -25,10 +25,13 @@ actor RenewalCoordinator {
 
     /// 单个应用续签失败后的最大自动重试次数（即总共最多尝试 1 + maxRetries 次）
     private let maxAttempts = 3
-    /// 重试前等待的基础秒数，第 n 次重试等待 baseRetryDelay * n
+    /// 重试前等待的基础秒数，第 n 次重试等待 baseRetryDelay * n。
+    /// 涉及 Apple 限流自愈，刻意保守、不缩短；激进缩短会让 503 场景退避不足反而更慢。
     private let baseRetryDelay: UInt64 = 2_000_000_000
-    /// 两个应用之间的间隔，给 Apple 服务器和本地安装通道缓冲
-    private let interAppDelay: UInt64 = 1_500_000_000
+    /// 两个应用之间的间隔，给 Apple 服务器和本地安装通道缓冲。
+    /// 应用内部本就含多段 Apple 往返（fetchTeams / App ID / profile），
+    /// 此间隔仅兜底分批节奏；延续签优化从 1.5s 保守降至 0.75s，仍是「给服务器缓冲」语义。
+    private let interAppDelay: UInt64 = 750_000_000
 
     init(
         appStore: any AppStore,

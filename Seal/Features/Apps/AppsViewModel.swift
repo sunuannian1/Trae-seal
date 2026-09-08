@@ -1521,6 +1521,12 @@ final class AppsViewModel: ObservableObject {
         signingSession?.status = .running(stage)
     }
 
+    // 安装通道 AFC 上传阶段的真实进度（0-1）→ 刷新进度 UI
+    private func updateInstallProgress(_ progress: Double) {
+        guard signingSession != nil else { return }
+        signingSession?.installProgress = progress
+    }
+
     // SigningCoordinator 在证书序列号确定后回传（actor 上下文 → hop 回 MainActor 更新快照）
     private func updateResolvedCertificateSerialNumber(_ serialNumber: String) {
         signingSession?.selectedCertificateSerialNumber = serialNumber

@@ -102,6 +102,9 @@ actor SigningCoordinator {
 
         do {
             try Task.checkCancellation()
+            // 免费账号每台设备最多同时 3 个自签应用（含 Seal 自身）；installd 超限只报模糊
+            // 错误并长时间转圈，这里按本机记录提前拦截给出明确指引。
+            try await enforceFreeAccountInstallLimit(app: app, account: account)
             let deviceIdentifier: String
             // 宽松策略：通道暂时不可用时不中止签名，先用配对缓存的 UDID 完成签名，
             // 签名完成后再尝试启动通道安装（签名耗时通常足够 VPN/Minimuxer 恢复）
@@ -142,7 +145,8 @@ actor SigningCoordinator {
                 targetBundleIdentifier: targetBundleIdentifier,
                 certificateSerialNumber: effectiveCertificateSerialNumber,
                 deviceIdentifier: deviceIdentifier,
-                progress: progress
+                progress: progress,
+                onInstallProgress: onInstallProgress
             ) {
                 return cachedInstall
             }
@@ -525,7 +529,8 @@ actor SigningCoordinator {
             signedPath: signedPath,
             bundleIdentifier: mappedBundleIdentifier,
             expirationDate: pendingExpiration,
-            progress: progress
+            progress: progress,
+            onInstallProgress: onInstallProgress
         )
     }
 
@@ -598,7 +603,8 @@ actor SigningCoordinator {
             try await installChannel.install(
                 ipaData: signedData,
                 bundleID: effectiveBundleID,
-                isSelfReplacement: true
+                isSelfReplacement: true,
+                onProgress: onInstallProgress
             )
             updated.hasPendingSelfUpdateSource = false
             try await appStore.save(updated)
@@ -611,7 +617,8 @@ actor SigningCoordinator {
             try await installChannel.install(
                 ipaData: signedData,
                 bundleID: effectiveBundleID,
-                isSelfReplacement: false
+                isSelfReplacement: false,
+                onProgress: onInstallProgress
             )
 
             try await updateState(appID: app.id, stage: .verifying)
@@ -824,6 +831,30 @@ actor SigningCoordinator {
             reason: reason,
             recovery: recovery,
             code: code
+        )
+    }
+
+    private static let freeAccountDeviceLimit = 3
+
+    /// 免费 Apple ID 每台设备最多同时安装 3 个自签应用（含 Seal 自身）。
+    /// 超限时 installd 只返回模糊错误且伴随长时间重传转圈，这里按本机已安装记录提前拦截。
+    /// 按「签名团队」（同一免费 Apple ID 的 teamID）维度计数，不同免费 Apple ID 槽位独立。
+    private func enforceFreeAccountInstallLimit(
+        app: AppRecord,
+        account: AppleAccountRecord
+    ) async throws {
+        guard account.isFreeTeam == true else { return }
+        let occupied = try await appStore.fetchAll().filter { record in
+            // 续签既有 App 时自身不计入，避免误拦；仅统计真正已安装、且同属本次签名团队
+            record.id != app.id
+                && record.belongsInInstalledList
+                && record.signingTeamID?.caseInsensitiveCompare(account.teamID) == .orderedSame
+        }.count
+        guard occupied >= Self.freeAccountDeviceLimit else { return }
+        throw Self.failure(
+            reason: "当前 Apple ID（免费账号）在一台设备上最多同时安装 \(Self.freeAccountDeviceLimit) 个自签应用（含 Seal 自身），现已达到上限。",
+            recovery: "先在手机上卸载一个已安装的自签应用后重试，或改用其他 Apple ID 签名。",
+            code: "SEAL-APPID-DEVICELIMIT"
         )
     }
 }

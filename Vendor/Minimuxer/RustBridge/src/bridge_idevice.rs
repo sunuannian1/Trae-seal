@@ -157,7 +157,41 @@ pub extern "C" fn rust_bridge_idevice_stage_and_install(
     };
 
     runtime.block_on(async move {
-        match stage_and_install_rppairing(bundle_id, ipa_bytes).await {
+        match stage_and_install_rppairing(bundle_id, ipa_bytes, |_| {}).await {
+            Ok(()) => std::ptr::null_mut(),
+            Err(err) => crate::ffi_err!(err),
+        }
+    })
+}
+
+/// 带上传进度回调的合并调用（AFC 上传期间回传 0-100，0 与 100 各至少一次）。
+/// progress_cb 在 Rust 上传线程回调，progress_ctx 为不透明指针原样回传。
+/// 与不带回调版本 `rust_bridge_idevice_stage_and_install` 并存，旧路径不受影响。
+#[no_mangle]
+pub extern "C" fn rust_bridge_idevice_stage_and_install_with_callback(
+    bundle_id: *const c_char,
+    ipa_ptr: *const u8,
+    ipa_len: u32,
+    progress_cb: Option<extern "C" fn(u64, *mut std::ffi::c_void)>,
+    progress_ctx: usize,
+) -> *mut IdeviceFfiError {
+    let Some(bundle_id) = c_string_arg(bundle_id) else {
+        return invalid_argument_error();
+    };
+    let Some(ipa_bytes) = bytes_arg(ipa_ptr, ipa_len) else {
+        return invalid_argument_error();
+    };
+    let Some(runtime) = shared_runtime() else {
+        return runtime_error();
+    };
+
+    runtime.block_on(async move {
+        let upload_cb = move |pct: u64| {
+            if let Some(cb) = progress_cb {
+                cb(pct, progress_ctx as *mut std::ffi::c_void);
+            }
+        };
+        match stage_and_install_rppairing(bundle_id, ipa_bytes, upload_cb).await {
             Ok(()) => std::ptr::null_mut(),
             Err(err) => crate::ffi_err!(err),
         }

@@ -62,6 +62,26 @@ struct SigningProgressView: View {
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(Color.sealTextSecondary)
 
+            if stage == .pushing, let progress = session?.installProgress, progress >= 0, progress <= 1 {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("正在传输到设备")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.sealTextSecondary)
+                        Spacer()
+                        Text("\(Int(progress * 100))%")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.sealAccent)
+                            .monospacedDigit()
+                    }
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .tint(Color.sealAccent)
+                }
+                .padding(10)
+                .background(Color.sealAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
             if isRenewal {
                 Text("请保持 Seal 打开，不要锁屏或切换 App。")
                     .font(.system(size: 13, weight: .semibold))

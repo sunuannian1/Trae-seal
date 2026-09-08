@@ -398,6 +398,60 @@ actor MinimuxerInstallChannel: InstallChannel {
         #endif
     }
 
+    /// 带 AFC 上传进度（0-1）的合并安装覆写。Rust 上传线程回传的百分比经
+    /// `offThread` 阻塞调用链转成异步进度回调；仅上传阶段（0-100%）有真实数值，
+    /// 安装/验证仍为阶段驱动。
+    func install(
+        ipaData: Data,
+        bundleID: String,
+        isSelfReplacement: Bool,
+        onProgress: @escaping @Sendable (Double) async -> Void
+    ) async throws {
+        #if !targetEnvironment(simulator)
+        guard await isReady() else { throw Self.channelNotReadyFailure }
+        let ipaMB = Double(ipaData.count) / 1_000_000
+        let mergedTimeout = min(1800.0, 180.0 + ipaMB * 5.0) + 600.0
+        let maxAttempts = 3
+        var lastError: Error?
+        for attempt in 1...maxAttempts {
+            do {
+                let syncProgress: @Sendable (Double) -> Void = { [onProgress] p in
+                    Task { await onProgress(p) }
+                }
+                if isSelfReplacement {
+                    let installation = Task.detached(priority: .userInitiated) {
+                        try Minimuxer.stageAndInstall(bundleId: bundleID, ipaBytes: ipaData, progress: syncProgress)
+                    }
+                    try await Task.sleep(for: .milliseconds(250))
+                    await SelfReplacementController.returnToHomeScreen()
+                    try await installation.value
+                } else {
+                    let outcome = await offThread(seconds: mergedTimeout) {
+                        try Minimuxer.stageAndInstall(bundleId: bundleID, ipaBytes: ipaData, progress: syncProgress)
+                    }
+                    if case .some(.failure(let installError)) = outcome { throw installError }
+                    guard outcome != nil else { throw Self.installTimeoutFailure }
+                }
+                return
+            } catch {
+                lastError = error
+                guard attempt < maxAttempts else { break }
+                let detail = Self.errorDetail(error)
+                if detail.contains("MissingPackagePath") == false {
+                    Minimuxer.reset()
+                    await waitForNetworkRefresh(rounds: 2, delay: .milliseconds(600))
+                }
+                var readyWait = 0
+                while await isReady() == false && readyWait < 15 {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    readyWait += 1
+                }
+            }
+        }
+        throw Self.installationFailure(lastError!)
+        #endif
+    }
+
     func verifyInstalled(bundleID: String) async throws {
         #if targetEnvironment(simulator)
         return

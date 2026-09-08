@@ -95,6 +95,19 @@ struct AppDetailView: View {
             detailRow("描述文件有效期至", expiryDateText(app), valueColor: profileColor(app))
             Divider()
             detailRow("扩展", app.extensions.isEmpty ? "无" : "\(app.extensions.count) 个")
+            // 每个插件有独立的描述文件与有效期（独立 App ID，随续签一起刷新）。
+            // 逐插件展示到期时间，便于验证续签后插件 profile 是否已更新。
+            ForEach(
+                app.extensions.sorted(by: { $0.originalBundleIdentifier < $1.originalBundleIdentifier }),
+                id: \.id
+            ) { extensionRecord in
+                Divider()
+                detailRow(
+                    "插件·\(extensionRecord.name)",
+                    extensionExpiryText(extensionRecord),
+                    valueColor: extensionExpiryColor(extensionRecord)
+                )
+            }
             if app.belongsInInstalledList {
                 Divider()
                 detailRow("签名记录", signingRecordSummary(app))
@@ -206,6 +219,19 @@ struct AppDetailView: View {
     private func expiryDateText(_ app: AppRecord) -> String {
         guard let date = AppSigningPresentationHelpers.profileExpirationDate(for: app) else { return "未记录" }
         return SealSettingsDateFormatter.string(from: date)
+    }
+
+    private func extensionExpiryText(_ record: AppExtensionRecord) -> String {
+        guard let date = record.provisioningProfileExpirationDate else { return "未签名" }
+        return SealSettingsDateFormatter.string(from: date)
+    }
+
+    private func extensionExpiryColor(_ record: AppExtensionRecord) -> Color {
+        guard let date = record.provisioningProfileExpirationDate else { return .sealTextSecondary }
+        let remaining = date.timeIntervalSinceNow
+        if remaining < 0 { return .sealDanger }
+        if remaining < 2 * 24 * 3600 { return .sealWarning }
+        return .sealSuccess
     }
 
     private func entitlementSummary(_ app: AppRecord) -> String {
