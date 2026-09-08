@@ -104,7 +104,7 @@ pub async fn yeet_app_afc_rppairing(
     let mut afc = connect_to_rsd_services::<AfcClient>()
         .await
         .map_err(|e| ctx(e, "yeet/连接AFC"))?;
-    stage_via_afc(&mut afc, &bundle_id, ipa_bytes).await
+    stage_via_afc(&mut afc, &bundle_id, ipa_bytes, &mut |_| {}).await
 }
 
 /// 上传 + 安装合并调用：**安装主链路（唯一路径）**。
@@ -115,25 +115,37 @@ pub async fn yeet_app_afc_rppairing(
 /// shim afcd 的暂存视图绑定在该会话上——跨会话（每次新建隧道）暂存包对 installd
 /// 完全不可见，正是历史 MissingPackagePath 的根因。因此禁止把上传与安装拆到
 /// 各自新建的隧道；上传后 drop AFC 客户端是安全的（jas 同样如此）。
-pub async fn stage_and_install_rppairing(
+pub async fn stage_and_install_rppairing<F>(
     bundle_id: String,
     ipa_bytes: &[u8],
-) -> Result<(), IdeviceError> {
+    mut upload_cb: F,
+) -> Result<(), IdeviceError>
+where
+    F: FnMut(u64),
+{
     let mut afc = connect_to_rsd_services::<AfcClient>()
         .await
         .map_err(|e| ctx(e, "yeet/连接AFC"))?;
-    stage_via_afc(&mut afc, &bundle_id, ipa_bytes).await?;
+    stage_via_afc(&mut afc, &bundle_id, ipa_bytes, &mut upload_cb).await?;
     drop(afc);
     install_ipa_rppairing(bundle_id).await
 }
 
-/// 在给定 AFC 连接上完成暂存（幂等建目录、整包写入、同连接回读校验）。
+/// 在给定 AFC 连接上完成暂存（幂等建目录、分块写入、同连接回读校验）。
 /// 供 shim 通道与 CoreDevice 隧道通道复用。
-pub(crate) async fn stage_via_afc(
+///
+/// 分块写入口统一收敛到这里：每次写完一块按已写字节折算 0-100 回调
+/// （0 与 100 各至少一次）。`upload_cb` 为泛型闭包，兼容 yeet 的空闭包
+/// 与安装链路的真实进度回调。
+pub(crate) async fn stage_via_afc<F>(
     afc: &mut AfcClient,
     bundle_id: &str,
     ipa_bytes: &[u8],
-) -> Result<(), IdeviceError> {
+    upload_cb: &mut F,
+) -> Result<(), IdeviceError>
+where
+    F: FnMut(u64),
+{
     // 结构校验：IPA 内必须存在 Payload/*.app（上传前拦截损坏包）
     let _application_name = detect_application_name(ipa_bytes)?;
     let staged_dir = format!("{STAGING_DIR}/{bundle_id}");
