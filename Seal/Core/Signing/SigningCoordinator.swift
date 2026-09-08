@@ -378,8 +378,7 @@ actor SigningCoordinator {
                 signedPath: signedPath,
                 bundleIdentifier: bundleIdentifier,
                 expirationDate: expirationDate,
-                progress: progress,
-                onInstallProgress: onInstallProgress
+                progress: progress
             )
         } catch let failure as ImportFailure {
             app.state = app.state == .installed ? .installed : .signed
