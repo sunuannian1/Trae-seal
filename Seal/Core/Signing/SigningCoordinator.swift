@@ -849,21 +849,26 @@ actor SigningCoordinator {
         account: AppleAccountRecord
     ) async throws {
         guard account.isFreeTeam == true else { return }
-        let occupied = try await appStore.fetchAll().filter { record in
-            // 续签既有 App 时自身不计入，避免误拦；统计真正已安装、且同属本账号/签名团队。
-            // accountID 兜底：老记录的 signingTeamID 可能为 nil，仅凭 teamID 匹配会漏计，
-            // 导致第 4 个自签应用未被拦截、一路撞上 installd 的模糊拒绝（无法验证完整性）。
-            record.id != app.id
-                && record.belongsInInstalledList
-                && (
-                    record.signingTeamID?.caseInsensitiveCompare(account.teamID) == .orderedSame
-                    || (record.accountID != nil && record.accountID == account.id)
-                )
-        }.count
+        // Apple 的「free developer profile」上限是设备级：一台设备上所有用免费 Apple ID
+        // 签名的应用加总最多 3 个（跨不同 Apple ID / team 累计，不是每个账号 3 个）。
+        // 此前按 signingTeamID/accountID 过滤只数到当前账号，会漏掉用其它免费账号签的
+        // 应用。日志证实：微信/Seal/黄豆短剧分属不同 team，仍被 installd 以
+        // ApplicationVerificationFailed 拒绝。
+        let paidAccountIDs = try await accountRepository.fetchAll()
+            .filter { $0.isFreeTeam == false }
+            .map(\.id)
+        let occupied = try await appStore.fetchAll()
+            .filter { $0.id != app.id && $0.belongsInInstalledList }
+            .filter { record in
+                // 明确由付费账号签名的应用不占免费名额；其余（免费账号 / 记录缺失）计入。
+                guard let accountID = record.accountID else { return true }
+                return paidAccountIDs.contains(accountID) == false
+            }
+            .count
         guard occupied >= Self.freeAccountDeviceLimit else { return }
         throw Self.failure(
-            reason: "当前 Apple ID（免费账号）在一台设备上最多同时安装 \(Self.freeAccountDeviceLimit) 个自签应用（含 Seal 自身），现已达到上限。",
-            recovery: "先在手机上卸载一个已安装的自签应用后重试，或改用其他 Apple ID 签名。",
+            reason: "这台设备已用免费 Apple ID 同时安装了 \(Self.freeAccountDeviceLimit) 个自签应用（跨 Apple ID 累计，含 Seal 自身），已达到 Apple 上限。",
+            recovery: "先在手机上卸载一个已安装的自签应用后重试。",
             code: "SEAL-APPID-DEVICELIMIT"
         )
     }

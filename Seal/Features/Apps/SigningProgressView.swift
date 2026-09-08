@@ -347,7 +347,10 @@ struct SigningProgressView: View {
     }
 
     private func performPrimaryRecovery(_ failure: ImportFailure) {
-        if failure.code.hasPrefix("SEAL-NET-") {
+        if isNonRetryableFailure(failure) {
+            viewModel.dismissSigningResult()
+            dismiss()
+        } else if failure.code.hasPrefix("SEAL-NET-") {
             viewModel.retrySigning()
         } else if isInstallChannelFailure(failure) {
             Task { await viewModel.retryInstallationForCurrentSigningSession() }
@@ -407,6 +410,14 @@ struct SigningProgressView: View {
 
     private func isInstallChannelFailure(_ failure: ImportFailure) -> Bool {
         failure.code.hasPrefix("SEAL-INSTALL-")
+    }
+
+    /// 确定性失败：重试 / 重新安装都无法改变结果，只能按指引手动处理后重试。
+    /// 按钮统一为「知道了」并关闭，不做无效重试。
+    private func isNonRetryableFailure(_ failure: ImportFailure) -> Bool {
+        failure.code == "SEAL-APPID-DEVICELIMIT"
+            || failure.code == "SEAL-INSTALL-702l"   // 安装被 iOS 拒绝（免费账号 3 应用上限 / 完整性校验）
+            || failure.code == "SEAL-INSTALL-702s"   // 设备存储空间不足
     }
 
     private func openSettings(_ route: SettingsRoute) {
