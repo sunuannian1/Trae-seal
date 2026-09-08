@@ -588,8 +588,10 @@ actor ApplePortalSigningService {
         selectedCertificateSerialNumber: String?,
         persistSigningMaterial: @escaping @Sendable (AccountSecret, String) async throws -> Void
     ) async throws -> SigningIdentity {
-        // 快速路径：本地证书有效时跳过远程 fetchCertificates（中国大陆IP被时限流时这个请求很慢）
-        // 条件：P12可读、序列号非空、machineIdentifier已保存
+        // 快速路径：本地证书可读时先做"本地 + 可选校验"——能拉到 Apple 证书列表就比对，
+        // 证书仍有效才复用本地证书；拉不到（大陆 IP 时限流很慢）则退回本地证书保持提速。
+        // 否则本地证书已失效，落回慢速路径重新申请，避免旧证书配新描述文件触发 Rork 报
+        // "Signing identity is not authorized by one of the provisioning profiles"。
         let effectiveSerial = selectedCertificateSerialNumber ?? secret.certificateSerialNumber
         if let serial = effectiveSerial,
            serial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
@@ -599,7 +601,17 @@ actor ApplePortalSigningService {
            let machineID = secret.certificateMachineIdentifier,
            machineID.isEmpty == false {
             local.machineIdentifier = machineID
-            return SigningIdentity(certificate: local, secret: secret)
+            if let certificates = try? await fetchCertificates(team: team, session: session) {
+                if certificates.contains(where: {
+                    $0.serialNumber.caseInsensitiveCompare(serial) == .orderedSame
+                }) {
+                    return SigningIdentity(certificate: local, secret: secret)
+                }
+                // 证书已不在 Apple 生效列表，落到慢速路径重新申请新证书
+            } else {
+                // 网络失败/限流：退回本地证书，保留提速效果
+                return SigningIdentity(certificate: local, secret: secret)
+            }
         }
 
         // 慢速路径：本地证书不可用，从 Apple 服务器获取证书列表
@@ -1477,6 +1489,26 @@ actor ApplePortalSigningService {
         // 在 actor 上先提取 Sendable 数据（ALTProvisioningProfile 是 ObjC 非 Sendable 类型）
         let materials = profiles.map {
             RorkAppSigner.ProfileMaterial(bundleID: $0.bundleIdentifier, data: $0.data)
+        }
+
+        // 防御性校验：签名前确认主描述文件确实授权了当前证书。若证书已在 Apple 侧被
+        // 轮换/吊销，这里用明确的序列号对照报错，避免落到 Rork 的模糊报错。
+        let chosenSerial = altCert.serialNumber.filter(\.isHexDigit).uppercased()
+        let mainAuthData = materials.first(where: {
+            $0.bundleID.caseInsensitiveCompare(mainBundleID) == .orderedSame
+        })?.data ?? materials.first?.data
+        if let mainAuthData,
+           let authDetails = try? ProvisioningProfileReader().details(from: mainAuthData) {
+            let authorizedSerials = authDetails.certificateSerialNumbers
+                .map { $0.filter(\.isHexDigit).uppercased() }
+            if authorizedSerials.contains(chosenSerial) == false {
+                throw ApplePortalSigningFailure.make(
+                    stage: .signing,
+                    error: RorkAppSigner.SignError.signFailed(
+                        "所选证书 \(chosenSerial) 不在主描述文件授权列表 [\(authorizedSerials.joined(separator: ", "))] 中，证书可能已在 Apple 侧被轮换"
+                    )
+                )
+            }
         }
         // rork-sign 是 CPU 密集型同步操作，丢到后台线程，避免长时间占用 actor
         try await Task.detached(priority: .userInitiated) {
