@@ -422,11 +422,17 @@ actor MinimuxerInstallChannel: InstallChannel {
                     Task { await onProgress(p) }
                 }
                 if isSelfReplacement {
-                    let installation = Task.detached(priority: .userInitiated) {
-                        try Minimuxer.stageAndInstall(bundleId: bundleID, ipaBytes: ipaData, progress: syncProgress)
+                    // 上传（0→100%）完成即 staging 结束、installd 即将开始；此刻回主屏，
+                    // 使「回主屏」与「正在安装」对齐，避免固定 250ms 落在上传中途造成的 1-3 秒空档。
+                    let selfReplaceProgress: @Sendable (Double) -> Void = { [onProgress] p in
+                        Task { await onProgress(p) }
+                        if p >= 1.0 {
+                            Task { @MainActor in SelfReplacementController.returnToHomeScreen() }
+                        }
                     }
-                    try await Task.sleep(for: .milliseconds(250))
-                    await SelfReplacementController.returnToHomeScreen()
+                    let installation = Task.detached(priority: .userInitiated) {
+                        try Minimuxer.stageAndInstall(bundleId: bundleID, ipaBytes: ipaData, progress: selfReplaceProgress)
+                    }
                     try await installation.value
                 } else {
                     let outcome = await offThread(seconds: mergedTimeout) {
