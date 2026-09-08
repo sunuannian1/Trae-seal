@@ -47,6 +47,15 @@ internal func _rust_bridge_idevice_stage_and_install(
 	_ ipaLen: UInt32
 ) -> UnsafeMutablePointer<RustIdeviceFfiError>?
 
+@_silgen_name("rust_bridge_idevice_stage_and_install_with_callback")
+internal func _rust_bridge_idevice_stage_and_install_with_callback(
+	_ bundleId: UnsafePointer<Int8>?,
+	_ ipaPtr: UnsafePointer<UInt8>?,
+	_ ipaLen: UInt32,
+	_ progressCb: (@convention(c) (UInt64, UnsafeMutableRawPointer?) -> Void)?,
+	_ progressCtx: UInt
+) -> UnsafeMutablePointer<RustIdeviceFfiError>?
+
 @_silgen_name("rust_bridge_ota_identity_generate")
 internal func _rust_bridge_ota_identity_generate() -> UnsafeMutablePointer<CChar>?
 
