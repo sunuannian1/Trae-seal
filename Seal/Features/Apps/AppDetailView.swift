@@ -5,6 +5,7 @@ struct AppDetailView: View {
     let appID: UUID
     @ObservedObject var viewModel: AppsViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var showExtensions = false
 
     var body: some View {
         Group {
@@ -94,19 +95,42 @@ struct AppDetailView: View {
             Divider()
             detailRow("描述文件有效期至", expiryDateText(app), valueColor: profileColor(app))
             Divider()
-            detailRow("扩展", app.extensions.isEmpty ? "无" : "\(app.extensions.count) 个")
-            // 每个插件有独立的描述文件与有效期（独立 App ID，随续签一起刷新）。
-            // 逐插件展示到期时间，便于验证续签后插件 profile 是否已更新。
-            ForEach(
-                app.extensions.sorted(by: { $0.originalBundleIdentifier < $1.originalBundleIdentifier }),
-                id: \.id
-            ) { extensionRecord in
-                Divider()
-                detailRow(
-                    "插件·\(extensionRecord.name)",
-                    extensionExpiryText(extensionRecord),
-                    valueColor: extensionExpiryColor(extensionRecord)
-                )
+            if app.extensions.isEmpty {
+                detailRow("扩展", "无")
+            } else {
+                Button {
+                    showExtensions.toggle()
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 14) {
+                        Text("扩展")
+                            .foregroundStyle(.primary)
+                        Spacer(minLength: 12)
+                        Text("\(app.extensions.count) 个")
+                            .foregroundStyle(Color.sealTextSecondary)
+                        Image(systemName: showExtensions ? "chevron.up" : "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.sealAccent)
+                    }
+                    .padding(.vertical, 15)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                // 每个插件有独立的描述文件与有效期（独立 App ID，随续签一起刷新）。
+                // 逐插件展示到期时间，便于验证续签后插件 profile 是否已更新。
+                if showExtensions {
+                    ForEach(
+                        app.extensions.sorted(by: { $0.originalBundleIdentifier < $1.originalBundleIdentifier }),
+                        id: \.id
+                    ) { extensionRecord in
+                        Divider()
+                        detailRow(
+                            "插件·\(extensionRecord.name)",
+                            extensionExpiryText(extensionRecord),
+                            valueColor: extensionExpiryColor(extensionRecord)
+                        )
+                    }
+                }
             }
             if app.belongsInInstalledList {
                 Divider()
@@ -122,12 +146,16 @@ struct AppDetailView: View {
         HStack(alignment: .firstTextBaseline, spacing: 14) {
             Text(title)
                 .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .truncationMode(.tail)
             Spacer(minLength: 12)
             Text(value)
                 .foregroundStyle(valueColor)
                 .multilineTextAlignment(.trailing)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .layoutPriority(1)
         }
         .padding(.vertical, 15)
     }

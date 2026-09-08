@@ -220,7 +220,10 @@ struct SigningProgressView: View {
                 .font(.system(size: 12, weight: .regular, design: title.contains("Bundle") ? .monospaced : .default))
                 .foregroundStyle(Color.sealTextSecondary)
                 .multilineTextAlignment(.trailing)
-                .lineLimit(2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .truncationMode(.middle)
+                .layoutPriority(1)
         }
         .frame(minHeight: 42)
     }

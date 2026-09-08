@@ -189,9 +189,9 @@ Seal 为纯 iOS 自签工具，运行在手机上，经 LocalDevVPN 无线隧道
 
 ---
 
-## 8A. 真机验证清单（2026-09-08 三批改动统一待测）
+## 8A. 真机验证清单（四批改动统一待测）
 
-> 本机（Windows）无法编译。以下 P0 / P1 / 续签间隔三批改动均已代码就位，
+> 本机（Windows）无法编译。以下 P0 / P1 / 续签间隔 / UI-数据一致性 四批改动均已代码就位，
 > 需在 **Xcode 编译 RustBridge + 真机回归**后，才能把「已完成」改为「已落地验证」。
 > 顺序：先编译打通，再逐项真机回归；逐项打勾并记录结果。
 
@@ -231,6 +231,19 @@ Seal 为纯 iOS 自签工具，运行在手机上，经 LocalDevVPN 无线隧道
   - [ ] 用 `AppDetailView` 逐插件到期页，记录插件 profile 到期日
   - [ ] 续签后再次查看，插件到期日更新为新到期（而非保留旧值）
   - [ ] 若未刷新再查 `provisioningProfiles` / `RorkAppSigner` 是否回写插件日期
+
+### 项 5 · UI 与数据一致性 + 证书状态（2026-09-08 增补）
+- 改动：扩展折叠入口、Bundle ID/插件单行省略、已签名 App 页扩展时间同步、证书失效误判修复。
+- 涉及文件：`AppDetailView.swift` / `SigningProgressView.swift` / `AppleAccountDetailView.swift` / `CertificateHealthStatus.swift`。
+- 验收：
+  - [ ] 已安装详情：扩展区显示「扩展 N 个 + chevron」，点击展开逐插件到期时间，再点收起
+  - [ ] 签名失败页：Bundle ID 单行展示（缩小字号/中间省略 `.seal.TeamID` 后缀仍在），不换行溢出
+  - [ ] 详情页「插件·xxxx」单行，长插件名缩小/尾部省略，不挤压到期时间列
+  - [ ] 续签后「应用详情」与「Apple ID 已签名 App」两处插件到期日一致（均为新值）
+  - [ ] 证书详情页：Apple 侧同步失败/网络不可达时，本机证书与私钥完好者显示「可用」而非「失效」；
+        仅当 Apple 明确判定证书不存在/已过期、或本机私钥缺失时才显示「失效」
+  - [ ] 重登 Apple ID 后（`persistAuthenticatedAccount` 保留 p12/serial）：可正常签名；若签名失败导出日志定位
+        `SEAL-*NET*`（网络）还是 `SEAL-CERT-*`（本机私钥丢失，会自动重签新证书）
 
 ### 回归样本统一
 - [ ] 微信 / 黄豆短剧 / LCSign / lanmanga 均：可签名安装、续签覆盖安装且沙盒数据保留、断连自愈

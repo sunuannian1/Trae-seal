@@ -25,12 +25,15 @@ struct CertificateHealthStatus: Equatable, Sendable {
     }
 
     var isUsable: Bool {
-        portalPresence == .valid
+        // 同步失败（unknown）不代表证书失效：仅当 Apple 明确判定证书不存在（invalid）、
+        // 本机私钥缺失（invalid）、或证书已过期（invalid）时才判「无效」。
+        // 此前强制 portalPresence == .valid，导致网络/限流同步失败时误显示「失效」。
+        portalPresence != .invalid
             && p12Readable == .valid
             && localPrivateKey == .valid
             && keychainReadable == .valid
             && appleIDMatch == .valid
-            && teamMatch == .valid
+            && teamMatch != .invalid
             && expirationState == .valid
     }
 }

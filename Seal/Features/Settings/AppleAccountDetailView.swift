@@ -302,15 +302,31 @@ private struct AppleAccountAppItem: Identifiable, Equatable {
 
         let normalizedBundleIdentifier = snapshot.bundleIdentifier.lowercased()
         let portalExpiry = snapshot.appIDExpirationDate ?? .distantPast
-        let latestLocalExpiry = relatedApps
-            .filter { app in
-                app.accountID == Optional(accountID)
-                    && app.userIdentityKeys.contains(normalizedBundleIdentifier)
+
+        // 本地最新有效期需同时覆盖主应用与各插件扩展：
+        // 续签会刷新插件自己的描述文件（独立 App ID），但 userIdentityKeys 只含主应用 ID，
+        // 仅凭它匹配会漏掉扩展，导致「已签名 App」页的插件到期日停留在旧值。
+        let localExpiries = relatedApps
+            .filter { $0.accountID == Optional(accountID) }
+            .flatMap { app -> [Date] in
+                var dates: [Date] = []
+                if app.userIdentityKeys.contains(normalizedBundleIdentifier) {
+                    if let main = app.provisioningProfileExpirationDate ?? app.expiryDate {
+                        dates.append(main)
+                    }
+                }
+                for ext in app.extensions {
+                    let extKey = (ext.mappedBundleIdentifier ?? ext.originalBundleIdentifier)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    if extKey == normalizedBundleIdentifier,
+                       let date = ext.provisioningProfileExpirationDate {
+                        dates.append(date)
+                    }
+                }
+                return dates
             }
-            .compactMap { app in
-                app.provisioningProfileExpirationDate ?? app.expiryDate
-            }
-            .max()
+        let latestLocalExpiry = localExpiries.max()
 
         expiryDate = max(portalExpiry, latestLocalExpiry ?? .distantPast)
     }
