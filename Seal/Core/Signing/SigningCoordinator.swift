@@ -850,10 +850,15 @@ actor SigningCoordinator {
     ) async throws {
         guard account.isFreeTeam == true else { return }
         let occupied = try await appStore.fetchAll().filter { record in
-            // 续签既有 App 时自身不计入，避免误拦；仅统计真正已安装、且同属本次签名团队
+            // 续签既有 App 时自身不计入，避免误拦；统计真正已安装、且同属本账号/签名团队。
+            // accountID 兜底：老记录的 signingTeamID 可能为 nil，仅凭 teamID 匹配会漏计，
+            // 导致第 4 个自签应用未被拦截、一路撞上 installd 的模糊拒绝（无法验证完整性）。
             record.id != app.id
                 && record.belongsInInstalledList
-                && record.signingTeamID?.caseInsensitiveCompare(account.teamID) == .orderedSame
+                && (
+                    record.signingTeamID?.caseInsensitiveCompare(account.teamID) == .orderedSame
+                    || (record.accountID != nil && record.accountID == account.id)
+                )
         }.count
         guard occupied >= Self.freeAccountDeviceLimit else { return }
         throw Self.failure(

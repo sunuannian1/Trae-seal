@@ -382,6 +382,9 @@ actor MinimuxerInstallChannel: InstallChannel {
                 lastError = error
                 guard attempt < maxAttempts else { break }
                 let detail = Self.errorDetail(error)
+                if Self.isTerminalInstallError(detail) {
+                    break
+                }
                 if detail.contains("MissingPackagePath") == false {
                     // 非 MissingPackagePath（多为 socket/超时）：重建会话后重试
                     Minimuxer.reset()
@@ -437,6 +440,9 @@ actor MinimuxerInstallChannel: InstallChannel {
                 lastError = error
                 guard attempt < maxAttempts else { break }
                 let detail = Self.errorDetail(error)
+                if Self.isTerminalInstallError(detail) {
+                    break
+                }
                 if detail.contains("MissingPackagePath") == false {
                     Minimuxer.reset()
                     await waitForNetworkRefresh(rounds: 2, delay: .milliseconds(600))
@@ -566,16 +572,88 @@ actor MinimuxerInstallChannel: InstallChannel {
 
     private static func installationFailure(_ error: Error) -> ImportFailure {
         let detail = diagnostic(error)
-        let isNoDevice = detail.contains("NoDevice") || detail.contains("device")
-        let recovery = isNoDevice
-            ? "与设备连接断开，请检查 WiFi 连接后重试；大文件安装请保持 Seal 在前台"
-            : "确认设备已信任、存储空间充足后重试"
+        let lower = detail.lowercased()
+
+        // 确定性失败优先于连接类判断；错误文本里往往同时含 "device"（如
+        // "No space left on device"），必须先识别具体根因，否则会被误判成"设备断开"。
+
+        // 1) 存储空间不足（installd copyfile 阶段的内核 errno 28 / ENOSPC）
+        if lower.contains("no space")
+            || lower.contains("space left")
+            || lower.contains("enospc")
+            || lower.contains("errno 28")
+            || lower.contains("code 28")
+            || detail.contains("空间不足")
+            || detail.contains("储存空间")
+            || detail.contains("存储空间") {
+            return ImportFailure(
+                title: "设备存储空间不足",
+                reason: "设备在解压并复制应用时空间不足。\(detail)",
+                recovery: "删除一个或多个 App 或在系统设置中清理存储空间后重试",
+                code: "SEAL-INSTALL-702s"
+            )
+        }
+
+        // 2) 完整性校验失败 / 免费账号 3 应用上限（installd 的 APIInternalError）
+        if lower.contains("integrity")
+            || lower.contains("could not be verified")
+            || lower.contains("cannot be verified")
+            || lower.contains("maximum")
+            || lower.contains("limit")
+            || detail.contains("无法验证")
+            || detail.contains("完整性")
+            || detail.contains("上限")
+            || detail.contains("已达") {
+            return ImportFailure(
+                title: "安装被 iOS 拒绝",
+                reason: "iOS 拒绝了安装，常见原因是免费账号已装 3 个自签应用或签名校验失败。\(detail)",
+                recovery: "卸载一个已安装的自签应用后重试，或重新签名",
+                code: "SEAL-INSTALL-702l"
+            )
+        }
+
+        // 3) 设备未连接/断开（精确匹配，不再用宽松的 "device" 子串，避免误伤上文）
+        if detail.contains("NoDevice") || detail.contains("no device") {
+            return ImportFailure(
+                title: "与设备连接断开",
+                reason: "设备返回：\(detail)",
+                recovery: "检查 WiFi 连接后重试；大文件安装请保持 Seal 在前台",
+                code: "SEAL-INSTALL-702"
+            )
+        }
+
         return ImportFailure(
             title: "安装失败",
             reason: "设备返回：\(detail)",
-            recovery: recovery,
+            recovery: "确认设备已信任、存储空间充足后重试",
             code: "SEAL-INSTALL-702"
         )
+    }
+
+    /// 确定性安装拒绝（空间不足 / 完整性校验失败 / 免费账号 3 应用上限）：
+    /// 这类 installd 拒绝重传重试无意义，应首次即失败，避免把大包空推 3 轮。
+    /// 与 `installationFailure` 的分类标记保持一致。
+    private static func isTerminalInstallError(_ detail: String) -> Bool {
+        let lower = detail.lowercased()
+        if lower.contains("no space")
+            || lower.contains("space left")
+            || lower.contains("enospc")
+            || lower.contains("errno 28")
+            || lower.contains("code 28")
+            || lower.contains("integrity")
+            || lower.contains("could not be verified")
+            || lower.contains("cannot be verified")
+            || lower.contains("maximum")
+            || lower.contains("limit") {
+            return true
+        }
+        return detail.contains("空间不足")
+            || detail.contains("储存空间")
+            || detail.contains("存储空间")
+            || detail.contains("无法验证")
+            || detail.contains("完整性")
+            || detail.contains("上限")
+            || detail.contains("已达")
     }
 
     private static func diagnostic(_ error: Error) -> String {
