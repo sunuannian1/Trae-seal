@@ -378,6 +378,26 @@ struct AppSigningSheet: View {
         }
     }
 
+    /// 切换 Apple ID 后，全新未签且未手动改过 Bundle ID 的，用新账号 teamID 重算推荐 Bundle ID，
+    /// 使 `.seal.<TeamID>` 跟随所选账号变化；已签/已安装/Seal 自身不动（Bundle ID 已注册）。
+    private func regenerateBundleIDForAccountChange() {
+        guard isRenewal == false else { return }
+        guard workingApp.belongsInInstalledList == false,
+              workingApp.belongsInSignedList == false,
+              workingApp.isSeal == false else { return }
+        guard hasUserEditedBundleID == false else { return }
+        if let teamID = selectedAccount?.teamID, teamID.isEmpty == false {
+            targetBundleID = BundleIDPolicy.recommendedBundleIdentifier(
+                for: workingApp.originalBundleIdentifier,
+                teamID: teamID
+            )
+        } else {
+            targetBundleID = BundleIDPolicy.recommendedBundleIdentifier(
+                for: workingApp.originalBundleIdentifier
+            )
+        }
+    }
+
     private var workingApp: AppRecord {
         viewModel.apps.first(where: { $0.id == app.id }) ?? app
     }

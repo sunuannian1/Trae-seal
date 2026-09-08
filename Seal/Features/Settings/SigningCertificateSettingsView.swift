@@ -76,13 +76,7 @@ struct SigningCertificateSettingsView: View {
                                 await viewModel.refreshCertificateInventory(for: account, force: true)
                             }
                         } label: {
-                            let email = viewModel.fullEmail(for: account)
-                            if let serial = account.certificateSerialNumber, serial.isEmpty == false {
-                                let compact = AppSigningPresentationHelpers.compactSerial(serial)
-                                Text("\(email) · \(compact)")
-                            } else {
-                                Text("\(email) · 无证书")
-                            }
+                            Text(viewModel.fullEmail(for: account))
                             if account.id == activeAccount?.id {
                                 Image(systemName: "checkmark")
                             }
