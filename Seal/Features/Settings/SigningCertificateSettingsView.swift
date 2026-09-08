@@ -132,8 +132,8 @@ struct SigningCertificateSettingsView: View {
 
     private func localCertificateCard(account: AppleAccountRecord) -> some View {
         let health = viewModel.certificateHealthStatus(for: account.id)
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
                 Text("Apple 开发证书")
                     .font(.title3.weight(.semibold))
                     .lineLimit(1)
@@ -149,6 +149,7 @@ struct SigningCertificateSettingsView: View {
                         in: Capsule()
                     )
             }
+            .padding(.bottom, 14)
 
             Divider()
 
