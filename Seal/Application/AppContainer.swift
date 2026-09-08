@@ -169,7 +169,7 @@ struct AppContainer {
             let failure = ImportFailure(
                 title: "无法打开数据",
                 reason: "本地存储初始化失败：\(Self.readableStartupError(error))",
-                recovery: "知道了",
+                recovery: "重启 Seal 重试；如仍失败请检查设备剩余存储空间",
                 code: "SEAL-APP-001"
             )
             return AppContainer(

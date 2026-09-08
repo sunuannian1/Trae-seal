@@ -419,16 +419,20 @@ actor MinimuxerInstallChannel: InstallChannel {
         for attempt in 1...maxAttempts {
             do {
                 let syncProgress: @Sendable (Double) -> Void = { [onProgress] p in
+                    if p > 1.0 { return } // 哨兵仅用于自更新回主屏，普通安装忽略
                     Task { await onProgress(p) }
                 }
                 if isSelfReplacement {
-                    // 上传（0→100%）完成即 staging 结束、installd 即将开始；此刻回主屏，
-                    // 使「回主屏」与「正在安装」对齐，避免固定 250ms 落在上传中途造成的 1-3 秒空档。
+                    // 上传（0→100%）完成后，把「回主屏」押后到预检（lookup / afcd 快照）结束、
+                    // installd 安装命令即将下发那一刻（Rust 回传哨兵 1.01）。这样回主屏与
+                    // 「正在安装」对齐：既不会像固定 250ms 一样在上传中途就闪回主屏，
+                    // 也不会在「上传完成=1.0」就回屏、让主屏先空转 1-3 秒才出现安装图标。
                     let selfReplaceProgress: @Sendable (Double) -> Void = { [onProgress] p in
-                        Task { await onProgress(p) }
-                        if p >= 1.0 {
+                        if p > 1.0 {
                             Task { @MainActor in SelfReplacementController.returnToHomeScreen() }
+                            return
                         }
+                        Task { await onProgress(p) }
                     }
                     let installation = Task.detached(priority: .userInitiated) {
                         try Minimuxer.stageAndInstall(bundleId: bundleID, ipaBytes: ipaData, progress: selfReplaceProgress)
@@ -477,7 +481,7 @@ actor MinimuxerInstallChannel: InstallChannel {
         }
         throw ImportFailure(
             title: "安装后验证失败",
-            reason: "iOS 安装服务未返回已安装的 Bundle ID。",
+            reason: "iOS 安装服务未返回已安装的 Bundle ID（\(bundleID)）。",
             recovery: "重试",
             code: "SEAL-INSTALL-707a"
         )
@@ -544,7 +548,7 @@ actor MinimuxerInstallChannel: InstallChannel {
             || normalized.contains("invalid host") {
             return ImportFailure(
                 title: "设备配对不可用",
-                reason: "请确认已连接 Wi-Fi 且 LocalDevVPN 已连接后重试。",
+                reason: "当前 iPhone 的配对信息不可用或已失效，无法用于安装。",
                 recovery: "重新配对当前设备",
                 code: "SEAL-INSTALL-703"
             )
@@ -569,8 +573,8 @@ actor MinimuxerInstallChannel: InstallChannel {
             return channelNotReadyFailure
         }
         return ImportFailure(
-            title: "无法安装到手机",
-            reason: "请确认已连接 Wi-Fi 且 LocalDevVPN 已连接后重试。",
+            title: "无法连接到设备",
+            reason: "无法连接设备，且未能识别具体原因。请确认已连接同一 Wi-Fi、LocalDevVPN 已连接，且设备已解锁。",
             recovery: "重试",
             code: "SEAL-INSTALL-705"
         )
@@ -624,7 +628,7 @@ actor MinimuxerInstallChannel: InstallChannel {
                 title: "与设备连接断开",
                 reason: "设备返回：\(detail)",
                 recovery: "检查 WiFi 连接后重试；大文件安装请保持 Seal 在前台",
-                code: "SEAL-INSTALL-702"
+                code: "SEAL-INSTALL-702d"
             )
         }
 
@@ -778,27 +782,27 @@ actor MinimuxerInstallChannel: InstallChannel {
     private static let missingPairingFailure = ImportFailure(
         title: "设备未配对",
         reason: "当前设备还没有完成配对。",
-        recovery: "连接设备",
+        recovery: "使用配对助手连接 iPhone 后重试",
         code: "SEAL-PAIR-203b"
     )
 
     private static let vpnTunnelUnavailableFailure = ImportFailure(
-        title: "无法安装到手机",
-        reason: "请确认已连接 Wi-Fi 且 LocalDevVPN 已连接后重试。",
-        recovery: "重试",
+        title: "LocalDevVPN 未就绪",
+        reason: "LocalDevVPN 隧道不可用，无法连接设备。请先连接 Wi-Fi，并确认 LocalDevVPN 已启动且处于已连接状态。",
+        recovery: "打开 LocalDevVPN 后重试",
         code: "SEAL-INSTALL-701"
     )
 
     private static let deviceNotRespondingFailure = ImportFailure(
         title: "设备未响应",
-        reason: "请确认已连接 Wi-Fi 且 LocalDevVPN 已连接后重试。",
+        reason: "设备未响应。请确认 iPhone 已解锁、与电脑处于同一 Wi-Fi，且 LocalDevVPN 已连接。",
         recovery: "重试",
         code: "SEAL-INSTALL-708"
     )
 
     private static let channelNotReadyFailure = ImportFailure(
-        title: "无法安装到手机",
-        reason: "请确认已连接 Wi-Fi 且 LocalDevVPN 已连接后重试。",
+        title: "设备连接失败",
+        reason: "无法建立到设备的连接（超时、网络不可达或无设备）。请确认已连接同一 Wi-Fi、LocalDevVPN 已连接，且 iPhone 已解锁。",
         recovery: "重试",
         code: "SEAL-INSTALL-706b"
     )
@@ -812,7 +816,7 @@ actor MinimuxerInstallChannel: InstallChannel {
 
     private static let installTimeoutFailure = ImportFailure(
         title: "安装超时",
-        reason: "向设备传输并安装应用耗时过长，将自动重试。若多次出现，请确认 LocalDevVPN 连接稳定后再试。",
+        reason: "向设备传输并安装应用超过 10 分钟仍未完成，系统已自动重试。若多次出现，请确认 LocalDevVPN 连接稳定后再试。",
         recovery: "重试",
         code: "SEAL-INSTALL-702t"
     )

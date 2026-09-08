@@ -73,7 +73,7 @@ actor AppFileStore {
         ).first else {
             throw ImportFailure(
                 title: "无法保存 IPA",
-                reason: "应用目录不可用",
+                reason: "无法访问本机应用目录（Documents / Caches / Application Support）。",
                 recovery: "重新打开 Seal",
                 code: "SEAL-IPA-201"
             )
@@ -138,7 +138,7 @@ actor AppFileStore {
             }
             throw ImportFailure(
                 title: "无法导入 IPA",
-                reason: "文件复制失败",
+                reason: "文件 \(sourceURL.lastPathComponent) 复制失败。\n[\((error as NSError).domain) \((error as NSError).code)]",
                 recovery: "重新选择 IPA",
                 code: "SEAL-IPA-202"
             )
@@ -237,7 +237,7 @@ actor AppFileStore {
         } catch {
             throw ImportFailure(
                 title: "无法导入构建产物",
-                reason: "本机文件无法读取。",
+                reason: "本机文件 \(sourceURL.lastPathComponent) 无法读取。\n[\((error as NSError).domain) \((error as NSError).code)]",
                 recovery: "重新选择",
                 code: "SEAL-IPA-208"
             )
@@ -270,7 +270,7 @@ actor AppFileStore {
         } catch {
             throw ImportFailure(
                 title: "无法导入构建产物",
-                reason: "无法从压缩包中取出 IPA。",
+                reason: "无法从压缩包中取出 IPA。\n[\((error as NSError).domain) \((error as NSError).code)]",
                 recovery: "先解压后再导入 IPA",
                 code: "SEAL-IPA-210"
             )
@@ -357,7 +357,7 @@ actor AppFileStore {
             }
             throw ImportFailure(
                 title: "无法保存 IPA",
-                reason: "本地存储准备失败",
+                reason: "本地存储准备失败。\n[\((error as NSError).domain) \((error as NSError).code)]",
                 recovery: "检查存储空间后重试",
                 code: "SEAL-IPA-203"
             )
@@ -394,7 +394,7 @@ actor AppFileStore {
         guard fileManager.fileExists(atPath: pendingDirectory.path) else {
             throw ImportFailure(
                 title: "无法保存 IPA",
-                reason: "待提交文件缺失",
+                reason: "待提交的暂存目录缺失（\(pendingDirectory.lastPathComponent)）。",
                 recovery: "重新导入 IPA",
                 code: "SEAL-IPA-211a"
             )
@@ -433,7 +433,7 @@ actor AppFileStore {
         } catch {
             throw ImportFailure(
                 title: "无法保存 IPA",
-                reason: "文件提交失败",
+                reason: "文件提交失败。\n[\((error as NSError).domain) \((error as NSError).code)]",
                 recovery: "检查存储空间后重试",
                 code: "SEAL-IPA-212"
             )
@@ -953,7 +953,7 @@ actor AppFileStore {
     private func invalidStagedFileFailure() -> ImportFailure {
         ImportFailure(
             title: "无法保存 IPA",
-            reason: "临时文件无效",
+            reason: "暂存文件无效（不在可用临时目录内）。",
             recovery: "重新选择 IPA",
             code: "SEAL-IPA-204"
         )

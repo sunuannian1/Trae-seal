@@ -44,7 +44,7 @@ actor SigningCoordinator {
     ) async throws -> AppRecord {
         guard var app = try await appStore.fetchAll().first(where: { $0.id == appID }) else {
             throw Self.failure(
-                reason: "应用记录不存在",
+                reason: "未找到要签名的应用记录（应用 ID：\(appID)）。",
                 recovery: "重新导入 IPA",
                 code: "SEAL-SIGN-404"
             )
@@ -107,6 +107,12 @@ actor SigningCoordinator {
             // 免费账号每台设备最多同时 3 个自签应用（含 Seal 自身）；installd 超限只报模糊
             // 错误并长时间转圈，这里按本机记录提前拦截给出明确指引。
             try await enforceFreeAccountInstallLimit(app: app, account: account)
+            // 导入与已安装 IPA 相同（签名后 Bundle ID 一致）时，提前拦截，避免生成
+            // 拥有相同 Bundle ID 的重复记录与重复文件夹。
+            try await enforceBundleIdentifierUniqueness(
+                app: app,
+                targetBundleIdentifier: targetBundleIdentifier
+            )
             let deviceIdentifier: String
             // 宽松策略：通道暂时不可用时不中止签名，先用配对缓存的 UDID 完成签名，
             // 签名完成后再尝试启动通道安装（签名耗时通常足够 VPN/Minimuxer 恢复）
@@ -256,8 +262,7 @@ actor SigningCoordinator {
                 app.state = originalState == .installed ? .installed : .signed
                 app.signedArtifactStatus = .installFailed
                 app.lastInstallFailureCode = "SEAL-INSTALL-500"
-                let nsError = error as NSError
-                app.lastInstallFailureReason = "安装流程遇到未预期错误：\(nsError.domain) \(nsError.code) \(nsError.localizedDescription)"
+                app.lastInstallFailureReason = "安装流程遇到未预期错误，技术信息已写入脱敏日志。"
             } else {
                 app.state = originalState == .installed ? .installed : originalState
             }
@@ -279,7 +284,7 @@ actor SigningCoordinator {
             throw Self.failure(
                 reason: "本机签名包记录不完整。",
                 recovery: "重新签名",
-                code: "SEAL-INSTALL-710"
+                code: "SEAL-INSTALL-719"
             )
         }
         guard try await fileStore.exists(relativePath: signedPath) else {
@@ -412,8 +417,8 @@ actor SigningCoordinator {
                   let certificate = try? ALTCertificate(p12Data: p12, password: nil),
                   certificate.serialNumber.caseInsensitiveCompare(serialNumber) == .orderedSame else {
                 throw Self.failure(
-                    reason: "Apple 返回：无法创建签名证书",
-                    recovery: "重试",
+                    reason: "签名证书已从 Apple 获取，但写入本机 Keychain 后未能通过校验（重载的证书序列号与预期不一致）。",
+                    recovery: "重试；如持续失败请到「我的」页面撤销旧证书后重试",
                     code: "SEAL-CERT-210"
                 )
             }
@@ -739,7 +744,7 @@ actor SigningCoordinator {
         guard account.teamID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
             throw Self.failure(
                 reason: "此 Apple ID 没有可用 Team ID，无法创建 App ID 或证书。",
-                recovery: "重新验证 Apple ID",
+                recovery: "前往 developer.apple.com 同意开发者协议后重试，或改用其他 Apple ID",
                 code: "SEAL-AUTH-109"
             )
         }
@@ -832,11 +837,24 @@ actor SigningCoordinator {
         code: String
     ) -> ImportFailure {
         ImportFailure(
-            title: "无法完成签名",
+            title: Self.title(for: code),
             reason: reason,
             recovery: recovery,
             code: code
         )
+    }
+
+    /// 按错误码模块段给报错一个贴合语义的 title，避免所有错误都显示「无法完成签名」。
+    private static func title(for code: String) -> String {
+        if code == "SEAL-APPID-DEVICELIMIT" { return "应用数量已达上限" }
+        if code.hasPrefix("SEAL-INSTALL-") { return "安装失败" }
+        if code.hasPrefix("SEAL-AUTH-DB-") || code.hasPrefix("SEAL-SIGN-DB-") { return "本机数据错误" }
+        if code.hasPrefix("SEAL-AUTH-") { return "无法使用账号" }
+        if code.hasPrefix("SEAL-PAIR-") { return "设备配对失败" }
+        if code.hasPrefix("SEAL-CERT-") { return "证书处理失败" }
+        if code.hasPrefix("SEAL-APPID-") { return "应用标识被拒" }
+        if code.hasPrefix("SEAL-BUNDLE-") { return "Bundle ID 冲突" }
+        return "无法完成签名"
     }
 
     private static let freeAccountDeviceLimit = 3
@@ -870,6 +888,31 @@ actor SigningCoordinator {
             reason: "这台设备已用免费 Apple ID 同时安装了 \(Self.freeAccountDeviceLimit) 个自签应用（跨 Apple ID 累计，含 Seal 自身），已达到 Apple 上限。",
             recovery: "先在手机上卸载一个已安装的自签应用后重试。",
             code: "SEAL-APPID-DEVICELIMIT"
+        )
+    }
+
+    /// 签名目标 Bundle ID 与已安装应用冲突（导入与已安装 IPA 相同、签名后 Bundle ID 一致）时
+    /// 提前拦截。iOS 无法并存同 Bundle ID 的应用：继续安装只会覆盖同名应用并在列表里残留
+    /// 第二条相同身份的记录，同时文件系统也会多出一份重复文件夹。这里按 `userIdentityKeys`
+    /// （签名后的 mapped/preferred Bundle ID）比对，排除自身记录，续签不受影响。
+    private func enforceBundleIdentifierUniqueness(
+        app: AppRecord,
+        targetBundleIdentifier: String
+    ) async throws {
+        let normalizedTarget = targetBundleIdentifier
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard normalizedTarget.isEmpty == false else { return }
+        let records = try await appStore.fetchAll()
+        guard let conflicting = records.first(where: { record in
+            record.id != app.id
+                && record.belongsInInstalledList
+                && record.userIdentityKeys.contains(normalizedTarget)
+        }) else { return }
+        throw Self.failure(
+            reason: "Bundle ID「\(targetBundleIdentifier)」已被手机上的「\(conflicting.displayName)」占用，同一 Bundle ID 不能同时安装两个应用。",
+            recovery: "在签名页改用不同的 Bundle ID 后重试，或先在手机上卸载「\(conflicting.displayName)」。",
+            code: "SEAL-BUNDLE-004"
         )
     }
 }

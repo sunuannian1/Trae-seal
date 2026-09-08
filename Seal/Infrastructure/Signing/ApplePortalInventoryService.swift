@@ -102,7 +102,7 @@ actor ApplePortalInventoryService {
         guard let team = teams.first(where: { $0.identifier == account.teamID }) else {
             throw ImportFailure(
                 title: "Apple 同步失败",
-                reason: "Apple 返回的 Team 列表中没有当前账号保存的 Team。",
+                reason: "Apple 同步的团队列表中已找不到当前账号保存的 Team ID。",
                 recovery: "选择 Team",
                 code: "SEAL-AUTH-112c"
             )

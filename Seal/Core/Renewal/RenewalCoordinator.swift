@@ -120,7 +120,7 @@ actor RenewalCoordinator {
                 // 本地记录确实不存在，无法续签
                 let failure = ImportFailure(
                     title: "无法续签应用",
-                    reason: "续签时未找到该应用的本地记录。",
+                    reason: "续签时未找到应用（ID：\(item.appID)）的本地记录。",
                     recovery: "重新导入 IPA 并签名安装",
                     code: "SEAL-RENEW-404"
                 )
@@ -139,7 +139,7 @@ actor RenewalCoordinator {
                 guard let app = (try? await appStore.fetchAll())?.first(where: { $0.id == item.appID }) else {
                     lastError = ImportFailure(
                         title: "无法续签应用",
-                        reason: "续签时未找到该应用的本地记录。",
+                        reason: "续签时未找到应用（ID：\(item.appID)）的本地记录。",
                         recovery: "重新导入 IPA 并签名安装",
                         code: "SEAL-RENEW-404"
                     )

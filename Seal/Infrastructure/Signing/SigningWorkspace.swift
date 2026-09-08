@@ -51,7 +51,7 @@ struct SigningWorkspace: Sendable {
             ).filter { $0.pathExtension.lowercased() == "app" }
             guard appURLs.count == 1, let appURL = appURLs.first else {
                 throw Self.signingFailure(
-                    reason: "未找到主应用",
+                    reason: "未在 \(payloadURL.path) 下找到唯一的主应用（.app）。",
                     code: "SEAL-SIGN-401"
                 )
             }
@@ -195,7 +195,7 @@ struct SigningWorkspace: Sendable {
     private func validate(_ entries: [Entry]) throws {
         guard entries.count <= limits.maximumEntryCount else {
             throw Self.signingFailure(
-                reason: "解压内容超过安全上限",
+                reason: "IPA 内文件条目数 \(entries.count) 超过安全上限 \(limits.maximumEntryCount)。",
                 code: "SEAL-SIGN-402"
             )
         }
@@ -203,14 +203,14 @@ struct SigningWorkspace: Sendable {
         for entry in entries {
             guard ArchivePathValidator.isSafe(entry.path), entry.type != .symlink else {
                 throw Self.signingFailure(
-                    reason: "IPA 包含不安全路径",
+                    reason: "IPA 包含不安全路径：\(entry.path)。",
                     code: "SEAL-SIGN-403"
                 )
             }
             let (sum, overflow) = expandedSize.addingReportingOverflow(entry.uncompressedSize)
             guard overflow == false, sum <= limits.maximumExpandedSize else {
                 throw Self.signingFailure(
-                    reason: "解压内容超过安全上限",
+                    reason: "IPA 解压后总大小超过安全上限（\(sum) > \(limits.maximumExpandedSize) 字节）。",
                     code: "SEAL-SIGN-402a"
                 )
             }
@@ -254,7 +254,7 @@ struct SigningWorkspace: Sendable {
               let identifier = info["CFBundleIdentifier"] as? String,
               identifier.isEmpty == false else {
             throw Self.signingFailure(
-                reason: "应用标识无效",
+                reason: "应用 Info.plist 中缺少有效的 CFBundleIdentifier（Bundle ID）。",
                 code: "SEAL-SIGN-404b"
             )
         }
@@ -275,7 +275,7 @@ struct SigningWorkspace: Sendable {
         )
         guard var info = value as? [String: Any] else {
             throw Self.signingFailure(
-                reason: "应用信息无效",
+                reason: "应用 Info.plist 结构无效，无法修改 Bundle ID。",
                 code: "SEAL-SIGN-404c"
             )
         }
@@ -378,7 +378,7 @@ struct SigningWorkspace: Sendable {
 
     private func renderedSquareIcon(_ image: UIImage, pixels: CGFloat) throws -> Data {
         guard let source = image.cgImage else {
-            throw Self.signingFailure(reason: "自定义 App 图标无法处理", code: "SEAL-CUSTOM-004a")
+            throw Self.signingFailure(reason: "自定义 App 图标无法处理：无法读取图标位图数据。", code: "SEAL-CUSTOM-004a")
         }
         let side = min(source.width, source.height)
         let sourceRect = CGRect(
@@ -388,7 +388,7 @@ struct SigningWorkspace: Sendable {
             height: side
         )
         guard let cgImage = source.cropping(to: sourceRect) else {
-            throw Self.signingFailure(reason: "自定义 App 图标无法处理", code: "SEAL-CUSTOM-004b")
+            throw Self.signingFailure(reason: "自定义 App 图标无法处理：裁剪图标时失败。", code: "SEAL-CUSTOM-004b")
         }
         let cropped = UIImage(cgImage: cgImage, scale: 1, orientation: image.imageOrientation)
         let format = UIGraphicsImageRendererFormat()
@@ -416,7 +416,7 @@ struct SigningWorkspace: Sendable {
             format: &format
         )
         guard var info = value as? [String: Any] else {
-            throw Self.signingFailure(reason: "应用信息无效", code: "SEAL-SIGN-404d")
+            throw Self.signingFailure(reason: "应用 Info.plist 结构无效，无法写入签名信息。", code: "SEAL-SIGN-404d")
         }
         mutation(&info)
         let updated = try PropertyListSerialization.data(

@@ -80,7 +80,7 @@ enum ApplePortalSigningFailure {
             details = (
                 "打包失败",
                 "签名后的 IPA 无法完成打包。\n详情：\(diagnostic)",
-                "重试",
+                "检查设备剩余存储空间后重试；仍失败请重新签名",
                 "SEAL-SIGN-502"
             )
         }
@@ -103,7 +103,7 @@ enum ApplePortalSigningFailure {
             || normalized.contains("bundle identifier unavailable") {
             return ImportFailure(
                 title: "Bundle ID 已被占用",
-                reason: "这个 Bundle ID 已被其他开发者账号注册，当前账号无法使用。",
+                reason: "这个 Bundle ID 已被其他开发者账号注册，当前账号无法使用。\nApple 返回：\(diagnostic)",
                 recovery: "更换一个新的 Bundle ID，或使用注册该 Bundle ID 的原账号签名",
                 code: "SEAL-APPID-302"
             )
@@ -119,7 +119,7 @@ enum ApplePortalSigningFailure {
             return ImportFailure(
                 title: "7 天内最多注册 10 个 App ID",
                 reason: "已达到 App ID 数量上限。App ID 无法手动删除，7 天后自动过期。请到「已签名 App」查看过期时间，或换其他 Apple ID 签名。",
-                recovery: "知道了",
+                recovery: "App ID 无法手动删除，7 天后自动过期；或换其他 Apple ID 签名",
                 code: "SEAL-APPID-304"
             )
         }
@@ -143,8 +143,8 @@ enum ApplePortalSigningFailure {
             || normalized.contains("invalidcertificaterequest") {
             return ImportFailure(
                 title: "无法创建签名证书",
-                reason: "Apple 服务器未能创建签名证书。可能原因：该账号证书数量已达上限、或网络不稳定。",
-                recovery: "检查网络后重试；如持续失败请在「我的」中撤销旧证书后再试",
+                reason: "Apple 拒绝创建签名证书：该账号证书数量已达上限，或本次证书请求无效（Apple 错误 \(diagnostic)）。",
+                recovery: "在「我的」页面撤销一个旧签名证书后重试",
                 code: "SEAL-CERT-204a"
             )
         }
@@ -155,8 +155,8 @@ enum ApplePortalSigningFailure {
             || nsError.domain == NSURLErrorDomain {
             return ImportFailure(
                 title: "证书服务连接失败",
-                reason: "Apple 返回：证书服务暂时不可用",
-                recovery: "重试",
+                reason: "无法连接 Apple 证书服务（网络超时或无法连接）。Apple 返回：\(diagnostic)",
+                recovery: "检查网络后重试",
                 code: "SEAL-CERT-205"
             )
         }
@@ -312,9 +312,9 @@ actor ApplePortalSigningService {
             } catch {
                 throw Self.failure(
                     title: "签名请求失败",
-            reason: "Apple 服务器未能完成签名请求。可能原因：网络不稳定、或 Apple 服务暂时不可用。",
-            recovery: "检查网络后稍后重试；如持续失败请查看日志",
-                    code: "SEAL-SIGN-501"
+                    reason: "重设签名环境后，Apple 服务器仍未能完成签名请求（可能网络不稳定或 Apple 服务暂时不可用）。",
+                    recovery: "检查网络后稍后重试；如持续失败请查看日志",
+                    code: "SEAL-SIGN-503"
                 )
             }
         }
@@ -360,7 +360,7 @@ actor ApplePortalSigningService {
             guard let team = teams.first(where: { $0.identifier == account.teamID }) else {
                 throw Self.failure(
                     title: "Team 不匹配",
-                    reason: "当前 Apple ID 中没有找到已保存的 Team。Seal 不会静默切换到其他 Team。",
+                    reason: "Apple 返回的团队列表中已找不到已保存的 Team ID；Seal 不会静默切换到其他 Team。",
                     recovery: "选择 Team",
                     code: "SEAL-AUTH-112d"
                 )
@@ -444,9 +444,10 @@ actor ApplePortalSigningService {
                 $0.bundleIdentifier == prepared.mappedMainBundleID
             }) else {
                 throw Self.failure(
-                    title: "无法签名",
-                    reason: "主应用描述文件缺失",
-                    recovery: "检查网络后重试；如持续失败请重新导入 IPA",                    code: "SEAL-PROFILE-303"
+                    title: "主应用描述文件缺失",
+                    reason: "Apple 未返回主应用（\(prepared.mappedMainBundleID)）的签名描述文件。",
+                    recovery: "检查网络后重试；如持续失败请重新导入 IPA",
+                    code: "SEAL-PROFILE-305"
                 )
             }
 
@@ -507,16 +508,16 @@ actor ApplePortalSigningService {
             )
         } catch ALTAppleAPIError.incorrectCredentials {
             throw Self.failure(
-                title: "账号需要验证",
-                reason: "Apple ID 会话已失效",
+                title: "Apple ID 凭据被拒绝",
+                reason: "Apple 已明确拒绝当前登录凭据（可能密码已更改或账号被锁定）。",
                 recovery: "前往「我的」页面重新登录该 Apple ID",
                 code: "SEAL-AUTH-102d"
             )
         } catch ALTAppleAPIError.authenticationHandshakeFailed {
             throw Self.failure(
-                title: "账号需要验证",
-                reason: "Apple ID 会话已失效",
-                recovery: "前往「我的」页面重新登录该 Apple ID",
+                title: "登录握手未通过",
+                reason: "与 Apple 的登录握手失败（常见原因：设备环境数据无效或系统时间偏差）。",
+                recovery: "核对系统时间后重试；仍失败请到「我的」页面重新验证该 Apple ID",
                 code: "SEAL-AUTH-102e"
             )
         } catch let failure as ImportFailure {
@@ -718,9 +719,9 @@ actor ApplePortalSigningService {
             )
             guard cleanedUp else {
                 throw Self.failure(
-                    title: "签名失败",
-                    reason: "Apple 返回：无法创建签名证书",
-                    recovery: "重试",
+                    title: "证书清理未完成",
+                    reason: "签名证书已创建，但后续处理失败；自动撤销该证书也失败，可能残留一个占用名额的证书。",
+                    recovery: "在「我的」页面手动撤销多余证书后重试",
                     code: "SEAL-CERT-215c"
                 )
             }
@@ -801,9 +802,9 @@ actor ApplePortalSigningService {
         }
 
         throw Self.failure(
-            title: "签名失败",
-            reason: "Apple 返回：无法创建签名证书",
-            recovery: "重试",
+            title: "无法创建签名证书",
+            reason: "该账号证书数量已达上限，或本次证书请求无效。",
+            recovery: "在「我的」页面撤销一个旧签名证书后重试",
             code: "SEAL-CERT-204b"
         )
     }
@@ -942,7 +943,7 @@ actor ApplePortalSigningService {
         guard let mainApplication = ALTApplication(fileURL: appURL) else {
             throw Self.failure(
                 title: "无法签名",
-                reason: "应用结构无效",
+                reason: "应用结构无效，无法从 \(appURL.path) 解析出主应用（可能缺少 Info.plist 或可执行文件）。",
                 recovery: "检查 IPA",
                 code: "SEAL-SIGN-404a"
             )
@@ -1263,7 +1264,7 @@ actor ApplePortalSigningService {
         guard let updated = appID.copy() as? ALTAppID else {
             throw Self.failure(
                 title: "无法签名",
-                reason: "应用能力更新失败",
+                reason: "应用能力更新失败：Apple 返回的 App ID 无法复制，未能写入新的应用能力（如 App Groups、推送等权限）。",
                 recovery: "检查网络后重试；如持续失败请重新导入 IPA",                code: "SEAL-PROFILE-304"
             )
         }

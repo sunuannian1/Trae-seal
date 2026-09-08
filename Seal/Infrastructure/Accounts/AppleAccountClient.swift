@@ -227,15 +227,15 @@ final class AppleAccountClient {
         } catch ALTAppleAPIError.incorrectVerificationCode {
             throw ImportFailure(
                 title: "无法添加账号",
-                reason: "验证码无效",
-                recovery: "重试",
+                reason: "Apple 拒绝了当前验证码（验证码无效或已过期）。",
+                recovery: "获取最新验证码后重新输入",
                 code: "SEAL-AUTH-101"
             )
         } catch ALTAppleAPIError.incorrectCredentials {
             throw ImportFailure(
                 title: "无法添加账号",
-                reason: "Apple ID 或密码无效",
-                recovery: "重试",
+                reason: "Apple 拒绝了账号 \(Self.mask(email)) 的登录凭据（Apple ID 不存在或密码错误）。",
+                recovery: "核对 Apple ID 与密码后重试；忘记密码请先到 Apple 官网重置",
                 code: "SEAL-AUTH-102a"
             )
         } catch ALTAppleAPIError.invalidAnisetteData {
@@ -252,7 +252,7 @@ final class AppleAccountClient {
                     title: "无法添加账号",
                     reason: "Apple 拒绝了本次认证使用的设备环境数据（Anisette）。\n底层错误：\(underlying)",
                     recovery: "重试；如持续失败，到「我的」页面手动重置签名环境（会导致已登录 ID 需重新验证）",
-                    code: "SEAL-AUTH-107a"
+                    code: "SEAL-ANI-115"
                 )
             }
             // Apple 拒绝认证握手，通常与 Anisette 设备环境数据无效有关，
@@ -295,7 +295,7 @@ final class AppleAccountClient {
             guard teams.contains(where: { $0.identifier == account.teamID }) else {
                 throw ImportFailure(
                     title: "Team 不可用",
-                    reason: "当前 Apple ID 已无法访问之前保存的 Team。",
+                    reason: "当前 Apple ID 已无法访问之前保存的 Team（Apple 返回的团队列表中已找不到该 Team）。",
                     recovery: "选择 Team",
                     code: "SEAL-AUTH-112a"
                 )
@@ -318,9 +318,10 @@ final class AppleAccountClient {
                     reason: "当前网络或 Apple 服务不可用。已保存的 Apple ID 仍可继续选择。"
                 )
             }
+            let nsError = error as NSError
             throw ImportFailure(
                 title: "无法验证 Apple ID",
-                reason: "Apple 验证返回了无法分类的错误，账号状态未改变。",
+                reason: "Apple 验证返回了无法分类的错误，账号状态未改变。\n[\(nsError.domain) \(nsError.code)]",
                 recovery: "稍后重试；如持续失败再重新验证 Apple ID",
                 code: "SEAL-VERIFY-500a"
             )
@@ -521,23 +522,27 @@ final class AppleAccountClient {
     private nonisolated static func failure(from error: Error) -> ImportFailure {
         if let anisetteError = error as? AnisetteV3Error {
             let code: String
-            var detail = ""
+            let reason: String
             switch anisetteError {
             case .invalidIdentifier, .invalidServerResponse:
                 code = "SEAL-ANI-110"
+                reason = "Apple 拒绝了当前的设备标识（Anisette 无效或服务器响应异常）。"
             case .provisioningFailed:
                 code = "SEAL-ANI-111"
+                reason = "Anisette 设备信息（provisioning）生成失败。"
             case .staleProvisioning:
                 code = "SEAL-ANI-112"
+                reason = "Anisette 设备信息（provisioning）已过期，请重新生成。"
             case .unavailable:
                 code = "SEAL-ANI-113"
+                reason = "Anisette 服务当前不可用。"
             case .localGenerationFailed(let d):
                 code = "SEAL-ANI-114"
-                detail = d
+                reason = "本机生成设备环境数据（Anisette）失败。\n\(d)"
             }
             return ImportFailure(
                 title: "无法获取设备环境",
-                reason: detail.isEmpty ? "Anisette 服务暂时不可用" : detail,
+                reason: reason,
                 recovery: "重试",
                 code: code
             )
@@ -563,12 +568,12 @@ final class AppleAccountClient {
             detailParts.append("嵌套：\(underlying.domain)/\(underlying.code) \(underlying.localizedDescription)")
         }
         let detail = detailParts.joined(separator: "\n")
-        let baseReason = isVerificationFailure ? "验证码无效" : "Apple ID 验证失败"
+        let baseReason = isVerificationFailure ? "Apple 拒绝了当前验证码（验证码无效或已过期）" : "Apple ID 验证失败"
         return ImportFailure(
             title: "无法添加账号",
             reason: "\(baseReason)\n\(detail)",
-            recovery: "重试",
-            code: isVerificationFailure ? "SEAL-AUTH-101" : "SEAL-AUTH-107"
+            recovery: isVerificationFailure ? "获取最新验证码后重试" : "重试；如持续失败请核对 Apple ID 与密码",
+            code: isVerificationFailure ? "SEAL-AUTH-101" : "SEAL-AUTH-107a"
         )
     }
 }

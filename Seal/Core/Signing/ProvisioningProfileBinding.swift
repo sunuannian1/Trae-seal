@@ -76,6 +76,7 @@ struct ProvisioningProfileBinding: Codable, Equatable, Sendable {
             .sorted()
         guard missing.isEmpty else {
             throw Self.failure(
+                title: "权限缺失",
                 reason: "描述文件未授权 \(bundleIdentifier) 请求的权限：\(missing.joined(separator: "、"))。",
                 code: "SEAL-ENTITLEMENT-401"
             )
@@ -91,6 +92,7 @@ struct ProvisioningProfileBinding: Codable, Equatable, Sendable {
         }
         guard mismatched.isEmpty else {
             throw Self.failure(
+                title: "权限不一致",
                 reason: "描述文件中的权限值与 \(bundleIdentifier) 请求不一致：\(mismatched.joined(separator: "、"))。",
                 code: "SEAL-ENTITLEMENT-402"
             )
@@ -119,9 +121,9 @@ struct ProvisioningProfileBinding: Codable, Equatable, Sendable {
         value.filter(\.isHexDigit).uppercased()
     }
 
-    private static func failure(reason: String, code: String) -> ImportFailure {
+    private static func failure(title: String = "描述文件校验失败", reason: String, code: String) -> ImportFailure {
         ImportFailure(
-            title: "描述文件校验失败",
+            title: title,
             reason: reason,
             recovery: "重新获取描述文件；仍失败时检查 Apple ID、Team、证书和设备",
             code: code

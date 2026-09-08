@@ -133,7 +133,7 @@ pub extern "C" fn rust_bridge_idevice_install_ipa(
     };
 
     runtime.block_on(async move {
-        match install_ipa_rppairing(bundle_id).await {
+        match install_ipa_rppairing(bundle_id, &mut |_| {}).await {
             Ok(()) => std::ptr::null_mut(),
             Err(err) => crate::ffi_err!(err),
         }

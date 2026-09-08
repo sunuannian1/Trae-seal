@@ -25,7 +25,7 @@ enum AppleServiceFailurePolicy {
     static func networkFailure(
         underlying _: Error? = nil,
         title: String = "网络不可用",
-        reason: String = "当前无法连接 Apple 服务。已保存的 Apple ID 不会受到影响。",
+        reason: String = "无法连接 Apple 服务（网络不可达、超时或 DNS 解析失败）。已保存的 Apple ID 不会受到影响。",
         recovery: String = "网络恢复后重试",
         code: String = "SEAL-NET-101"
     ) -> ImportFailure {

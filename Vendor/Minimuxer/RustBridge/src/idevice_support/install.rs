@@ -21,6 +21,12 @@ const STAGING_DIR: &str = "PublicStaging";
 /// installd 只按 PackagePath 读包、不依赖文件名，固定名等价且排除非 ASCII 编码问题。
 pub(crate) const IPA_STAGING_NAME: &str = "app.ipa";
 
+/// 哨兵进度值（>100）：上传已结束、预检完成，**installd 安装命令即将下发**。
+/// Swift 层据此在自更新场景触发回主屏，使「回主屏」与「正在安装」对齐，
+/// 避免在「上传完成=100」就回屏（自进程仍要跑 lookup / afcd 预检的 1-3 秒）
+/// 造成主屏上先空转再出现安装图标的空档。
+const INSTALL_ISSUED_PCT: u64 = 101;
+
 /// 暂存布局：`PublicStaging/<bundleId>/app.ipa`——与经典 lockdown 通道完全一致。
 /// 本设备 PublicStaging 里留有 bundleId 目录（历史成功安装的痕迹），对齐它最稳。
 
@@ -128,7 +134,7 @@ where
         .map_err(|e| ctx(e, "yeet/连接AFC"))?;
     stage_via_afc(&mut afc, &bundle_id, ipa_bytes, &mut upload_cb).await?;
     drop(afc);
-    install_ipa_rppairing(bundle_id).await
+    install_ipa_rppairing(bundle_id, &mut upload_cb).await
 }
 
 /// 在给定 AFC 连接上完成暂存（幂等建目录、分块写入、同连接回读校验）。
@@ -275,7 +281,13 @@ fn install_candidates(bundle_id: &str, file_name: &str) -> Vec<(String, Value)> 
 /// 统一报 MissingPackagePath，而对「包找到但安装失败」报其他错误——利用这一点
 /// 按候选链逐一尝试：只要某个组合返回了非 MissingPackagePath 错误，说明 installd
 /// 已定位到包，立即停止换路径并把真实错误抛出。
-pub async fn install_ipa_rppairing(bundle_id: String) -> Result<(), IdeviceError> {
+pub async fn install_ipa_rppairing<F>(
+    bundle_id: String,
+    on_install_issued: &mut F,
+) -> Result<(), IdeviceError>
+where
+    F: FnMut(u64),
+{
     // 优先用 yeet 阶段缓存的暂存文件名（同一进程内已知，无需回读）。
     let file_name = match cached_ipa(&bundle_id) {
         Some((name, _expected_size)) => name,
@@ -343,7 +355,7 @@ pub async fn install_ipa_rppairing(bundle_id: String) -> Result<(), IdeviceError
         }
     }
 
-    run_install_chain(&mut inst_client, already_installed, &bundle_id, &file_name)
+    run_install_chain(&mut inst_client, already_installed, &bundle_id, &file_name, on_install_issued)
         .await
         .map_err(|e| match e {
             // 把 afcd 侧快照附加到最终错误上（快照仅 shim 通道产生）
@@ -358,14 +370,24 @@ pub async fn install_ipa_rppairing(bundle_id: String) -> Result<(), IdeviceError
 /// 第一轮按（路径, 选项）组合逐一尝试；全部 MissingPackagePath 则卸载残留记录
 /// 后再以全新 Install 重试一轮。任何组合返回非 MissingPackagePath 错误，说明
 /// installd 已定位到包，立即停止换路径抛出真实错误。
-pub(crate) async fn run_install_chain(
+pub(crate) async fn run_install_chain<F>(
     inst_client: &mut InstallationProxyClient,
     already_installed: bool,
     bundle_id: &str,
     file_name: &str,
-) -> Result<(), IdeviceError> {
+    on_install_issued: &mut F,
+) -> Result<(), IdeviceError>
+where
+    F: FnMut(u64),
+{
     let candidates = install_candidates(bundle_id, file_name);
     let bundle_id = bundle_id.to_string();
+
+    // 预检（lookup / afcd 快照）已在 `install_ipa_rppairing` 内完成，此刻即将向
+    // installd 下发安装命令。自更新场景在此时回主屏（稍后 installd 会终止本进程
+    // 完成覆盖安装），使「回主屏」与「正在安装」对齐，避免在「上传完成=100」就回屏，
+    // 造成主屏上先空转（自进程仍跑预检）再出现安装图标的空档。
+    on_install_issued(INSTALL_ISSUED_PCT);
 
     // 第一轮：按候选链逐一尝试（lookup 失败按未安装处理，不阻断首装）
     let mut last_missing_path_error: Option<IdeviceError> = None;

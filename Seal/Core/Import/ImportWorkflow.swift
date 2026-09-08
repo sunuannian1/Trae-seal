@@ -442,7 +442,7 @@ actor ImportWorkflow {
         }
         return ImportFailure(
             title: "无法导入 IPA",
-            reason: "IPA 解析失败，文件结构或元数据不可读取。",
+            reason: "IPA 解析失败，文件结构或元数据不可读取。\n[\((error as NSError).domain) \((error as NSError).code)]",
             recovery: "重试",
             code: "SEAL-IPA-200"
         )
@@ -450,7 +450,7 @@ actor ImportWorkflow {
 
     private static let persistenceFailure = ImportFailure(
         title: "无法保存 IPA",
-        reason: "应用记录保存失败",
+        reason: "应用记录保存失败（IPA 文件已就绪，但记录未能写入应用列表）。",
         recovery: "重试",
         code: "SEAL-IPA-205"
     )

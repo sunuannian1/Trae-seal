@@ -66,9 +66,9 @@ actor ApplePortalCertificateService {
         } catch {
             guard Self.isCertificateLimitError(error) else { throw error }
             throw Self.failure(
-                title: "签名失败",
-                reason: "Apple 返回：无法创建签名证书",
-                recovery: "重试",
+                title: "无法创建签名证书",
+                reason: "该账号证书数量已达上限，或本次证书请求无效。",
+                recovery: "在「我的」页面撤销一个旧签名证书后重试",
                 code: "SEAL-CERT-204"
             )
         }
@@ -120,9 +120,9 @@ actor ApplePortalCertificateService {
             )
             guard cleanedUp else {
                 throw Self.failure(
-                    title: "签名失败",
-                    reason: "Apple 返回：无法创建签名证书",
-                    recovery: "重试",
+                    title: "证书清理未完成",
+                    reason: "签名证书已创建，但后续处理失败；自动撤销该证书也失败，可能残留一个占用名额的证书。",
+                    recovery: "在「我的」页面手动撤销多余证书后重试",
                     code: "SEAL-CERT-215b"
                 )
             }
@@ -174,8 +174,8 @@ actor ApplePortalCertificateService {
         }) else {
             throw Self.failure(
                 title: "证书撤销失败",
-                reason: "Apple 服务器未能撤销指定证书。可能原因：网络不稳定、或该证书已被撤销。",
-                recovery: "检查网络后重试；如持续失败请重新同步证书状态",
+                reason: "在 Apple 服务器上未找到要撤销的证书（序列号 \(serialNumber)）。",
+                recovery: "请在「我的」中重新同步证书状态后重试",
                 code: "SEAL-CERT-210a"
             )
         }
@@ -200,7 +200,7 @@ actor ApplePortalCertificateService {
         guard let team = teams.first(where: { $0.identifier == account.teamID }) else {
             throw Self.failure(
                 title: "账号 Team 不一致",
-                reason: "Apple 当前返回的 Team 中没有已保存的 Team。",
+                reason: "Apple 返回的团队列表中已找不到已保存的 Team ID。",
                 recovery: "选择 Team",
                 code: "SEAL-AUTH-112b"
             )

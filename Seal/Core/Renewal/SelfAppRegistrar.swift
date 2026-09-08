@@ -127,7 +127,7 @@ actor SelfAppRegistrar {
                 throw ImportFailure(
                     title: "Seal 临时文件清理失败",
                     reason: "Seal 自身注册已写入文件，但暂存文件未能清理。",
-                    recovery: "重新打开 Seal 后在存储维护中重试",
+                    recovery: "稍后在设置→存储维护中重试清理",
                     code: "SEAL-STORAGE-SELF-001"
                 )
             }

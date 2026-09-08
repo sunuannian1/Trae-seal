@@ -15,7 +15,7 @@ struct IPAParserService: Sendable {
         } catch {
             throw failure(
                 title: "无法打开 IPA",
-                reason: "文件不是有效的 IPA",
+                reason: "文件 \(url.lastPathComponent) 无法作为 IPA（ZIP）打开。",
                 recovery: "选择其他 IPA",
                 code: "SEAL-IPA-106"
             )
@@ -28,7 +28,7 @@ struct IPAParserService: Sendable {
         } catch {
             throw failure(
                 title: "无法读取 IPA",
-                reason: "应用信息已损坏",
+                reason: "应用信息解析失败。\n[\((error as NSError).domain) \((error as NSError).code)]",
                 recovery: "选择其他 IPA",
                 code: "SEAL-IPA-102"
             )
@@ -87,7 +87,7 @@ struct IPAParserService: Sendable {
         guard appInfoEntries.isEmpty == false else {
             throw failure(
                 title: "无法读取 IPA",
-                reason: "未找到应用信息",
+                reason: "未找到应用信息（Payload 目录缺少 .app 的 Info.plist）。",
                 recovery: "选择其他 IPA",
                 code: "SEAL-IPA-101"
             )
@@ -95,7 +95,7 @@ struct IPAParserService: Sendable {
         guard appInfoEntries.count == 1, let appInfoEntry = appInfoEntries.first else {
             throw failure(
                 title: "无法读取 IPA",
-                reason: "包含多个主应用",
+                reason: "包含多个主应用（找到 \(appInfoEntries.count) 个 .app/Info.plist）。",
                 recovery: "选择标准 IPA",
                 code: "SEAL-IPA-103"
             )
@@ -106,17 +106,25 @@ struct IPAParserService: Sendable {
             in: archive,
             maximumSize: limits.maximumMetadataSize
         )
-        guard let bundleIdentifier = info["CFBundleIdentifier"] as? String,
-              bundleIdentifier.isEmpty == false,
-              let version = info["CFBundleShortVersionString"] as? String,
-              version.isEmpty == false,
-              let buildNumber = info["CFBundleVersion"] as? String,
-              buildNumber.isEmpty == false,
-              let name = displayName(from: info),
+        let bundleIdentifier = info["CFBundleIdentifier"] as? String
+        let version = info["CFBundleShortVersionString"] as? String
+        let buildNumber = info["CFBundleVersion"] as? String
+        let name = displayName(from: info)
+        let missingFields = [
+            (bundleIdentifier?.isEmpty == false) ? nil : "Bundle ID",
+            (version?.isEmpty == false) ? nil : "版本号",
+            (buildNumber?.isEmpty == false) ? nil : "构建号",
+            (name?.isEmpty == false) ? nil : "应用名"
+        ].compactMap { $0 }
+        guard missingFields.isEmpty,
+              let bundleIdentifier,
+              let version,
+              let buildNumber,
+              let name,
               name.isEmpty == false else {
             throw failure(
                 title: "无法读取 IPA",
-                reason: "应用信息不完整",
+                reason: "应用信息不完整，缺少：\(missingFields.joined(separator: "、"))。",
                 recovery: "选择其他 IPA",
                 code: "SEAL-IPA-102a"
             )
@@ -164,7 +172,9 @@ struct IPAParserService: Sendable {
 
     private func validate(entries: [Entry]) throws {
         guard entries.count <= limits.maximumEntryCount else {
-            throw sizeFailure()
+            throw sizeFailure(
+                detail: "IPA 内文件条目数 \(entries.count) 超过安全上限 \(limits.maximumEntryCount)。"
+            )
         }
 
         var expandedSize: UInt64 = 0
@@ -172,7 +182,7 @@ struct IPAParserService: Sendable {
             guard ArchivePathValidator.isSafe(entry.path) else {
                 throw failure(
                     title: "IPA 不安全",
-                    reason: "压缩包包含非法路径",
+                    reason: "压缩包包含非法路径：\(entry.path)。",
                     recovery: "选择其他 IPA",
                     code: "SEAL-IPA-104"
                 )
@@ -180,7 +190,9 @@ struct IPAParserService: Sendable {
 
             let (sum, overflow) = expandedSize.addingReportingOverflow(entry.uncompressedSize)
             guard overflow == false, sum <= limits.maximumExpandedSize else {
-                throw sizeFailure()
+                throw sizeFailure(
+                    detail: "IPA 解压后总大小超过安全上限（\(sum) > \(limits.maximumExpandedSize) 字节）。"
+                )
             }
             expandedSize = sum
         }
@@ -200,7 +212,7 @@ struct IPAParserService: Sendable {
         guard let dictionary = value as? [String: Any] else {
             throw failure(
                 title: "无法读取 IPA",
-                reason: "应用信息已损坏",
+                reason: "无法解析 \(entry.path) 的 PropertyList。",
                 recovery: "选择其他 IPA",
                 code: "SEAL-IPA-102b"
             )
@@ -214,7 +226,9 @@ struct IPAParserService: Sendable {
         maximumSize: UInt64
     ) throws -> Data {
         guard entry.uncompressedSize <= maximumSize else {
-            throw sizeFailure()
+            throw sizeFailure(
+                detail: "文件 \(entry.path) 的大小 \(entry.uncompressedSize) 字节超过单文件读取上限 \(maximumSize) 字节。"
+            )
         }
 
         var result = Data()
@@ -308,7 +322,7 @@ struct IPAParserService: Sendable {
                   bundleIdentifier.isEmpty == false else {
                 throw failure(
                     title: "无法读取 IPA",
-                    reason: "扩展信息已损坏",
+                    reason: "扩展 \(entry.path) 的 Info.plist 缺少有效的 Bundle ID。",
                     recovery: "选择其他 IPA",
                     code: "SEAL-IPA-102c"
                 )
@@ -512,10 +526,10 @@ struct IPAParserService: Sendable {
         return number.int64Value
     }
 
-    private func sizeFailure() -> ImportFailure {
+    private func sizeFailure(detail: String) -> ImportFailure {
         failure(
             title: "IPA 过大",
-            reason: "解压内容超过安全上限",
+            reason: detail,
             recovery: "选择较小的 IPA",
             code: "SEAL-IPA-105"
         )

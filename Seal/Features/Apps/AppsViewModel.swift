@@ -472,7 +472,12 @@ final class AppsViewModel: ObservableObject {
             alertFailure = failure
         } catch {
             guard generation == loadGeneration else { return }
-            alertFailure = Self.dataFailure
+            alertFailure = ImportFailure(
+                title: "无法读取应用",
+                reason: "本地应用数据读取失败，应用列表无法加载。\n[\((error as NSError).domain) \((error as NSError).code)]",
+                recovery: "重试",
+                code: "SEAL-APP-002"
+            )
         }
     }
 
@@ -509,6 +514,10 @@ final class AppsViewModel: ObservableObject {
         let installedRecords = installedApps
         guard installedRecords.isEmpty == false else { return }
 
+        // 导入与已安装 IPA 相同（签名后的 Bundle ID 一致）会残留多条相同身份的记录，
+        // iOS 无法并存同 Bundle ID 的应用，这里按身份合并去重，只保留真实存在的一条。
+        await removeDuplicateInstalledRecords(installedRecords)
+
         do {
             for app in installedRecords {
                 guard let bundleIdentifier = installedBundleIdentifier(for: app) else { continue }
@@ -526,7 +535,7 @@ final class AppsViewModel: ObservableObject {
                 alertFailure = ImportFailure(
                     title: "\u{65E0}\u{6CD5}\u{5237}\u{65B0}\u{5DF2}\u{5B89}\u{88C5}\u{5E94}\u{7528}",
                     reason: "\u{672A}\u{80FD}\u{4ECE}\u{8BBE}\u{5907}\u{8BFB}\u{53D6}\u{771F}\u{5B9E}\u{5DF2}\u{5B89}\u{88C5}\u{5E94}\u{7528}\u{72B6}\u{6001}\u{3002}",
-                    recovery: "\u{77E5}\u{9053}\u{4E86}",
+                    recovery: "\u{91CD}\u{65B0}\u{8FDE}\u{63A5}\u{624B}\u{673A}\u{5E76}\u{5B8C}\u{6210}\u{914D}\u{5BF9}\u{540E}\u{91CD}\u{8BD5}",
                     code: "SEAL-INSTALL-707"
                 )
             }
@@ -543,6 +552,49 @@ final class AppsViewModel: ObservableObject {
             return preferred
         }
         return nil
+    }
+
+    /// 合并本机已安装列表中「签名后 Bundle ID 相同」的重复记录，只保留最可信的一条，
+    /// 删除其余重复记录及其文件夹。仅处理非 Seal 的第三方应用；Seal 自身由 SelfAppRegistrar 管理。
+    private func removeDuplicateInstalledRecords(_ records: [AppRecord]) async {
+        var bestByBundle: [String: AppRecord] = [:]
+        var duplicates: [AppRecord] = []
+        for record in records where record.isSeal == false {
+            guard let bundle = installedBundleIdentifier(for: record)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased(),
+                  bundle.isEmpty == false else {
+                continue
+            }
+            if let existing = bestByBundle[bundle] {
+                if preferKeeping(record, over: existing) {
+                    duplicates.append(existing)
+                    bestByBundle[bundle] = record
+                } else {
+                    duplicates.append(record)
+                }
+            } else {
+                bestByBundle[bundle] = record
+            }
+        }
+        for duplicate in duplicates {
+            _ = await delete(duplicate)
+        }
+    }
+
+    private func preferKeeping(_ lhs: AppRecord, over rhs: AppRecord) -> Bool {
+        if lhs.hasSignedArtifact != rhs.hasSignedArtifact {
+            return lhs.hasSignedArtifact
+        }
+        if lhs.isPinned != rhs.isPinned {
+            return lhs.isPinned
+        }
+        // 设备上只有一个应用，保留 state == .installed 的那条更接近真实状态。
+        if lhs.state == .installed && rhs.state != .installed { return true }
+        if rhs.state == .installed && lhs.state != .installed { return false }
+        let lhsDate = lhs.lastInstalledAt ?? lhs.importedAt
+        let rhsDate = rhs.lastInstalledAt ?? rhs.importedAt
+        return lhsDate >= rhsDate
     }
 
     private func seedSigningHistoryIfNeeded(
@@ -675,7 +727,7 @@ final class AppsViewModel: ObservableObject {
         guard cocoaError?.code != .userCancelled else { return }
         alertFailure = ImportFailure(
             title: "无法选择 IPA",
-            reason: "文件选择失败",
+            reason: "文件选择失败。\n[\((error as NSError).domain) \((error as NSError).code)]",
             recovery: "重试",
             code: "SEAL-IPA-206"
         )
@@ -886,7 +938,7 @@ final class AppsViewModel: ObservableObject {
         } catch {
             alertFailure = ImportFailure(
                 title: "无法保存 Bundle ID",
-                reason: "本地草稿保存失败。",
+                reason: "Bundle ID 草稿保存失败。\n[\((error as NSError).domain) \((error as NSError).code)]",
                 recovery: "重试",
                 code: "SEAL-BUNDLE-003"
             )
@@ -916,7 +968,7 @@ final class AppsViewModel: ObservableObject {
         } catch {
             alertFailure = ImportFailure(
                 title: "无法保存 App 名称",
-                reason: "本地记录保存失败。",
+                reason: "App 名称记录保存失败。\n[\((error as NSError).domain) \((error as NSError).code)]",
                 recovery: "重试",
                 code: "SEAL-CUSTOM-002"
             )
@@ -947,7 +999,7 @@ final class AppsViewModel: ObservableObject {
         } catch {
             alertFailure = ImportFailure(
                 title: "无法保存 App 图标",
-                reason: "图标文件无法写入本机存储。",
+                reason: "图标文件无法写入本机存储。\n[\((error as NSError).domain) \((error as NSError).code)]",
                 recovery: "重试",
                 code: "SEAL-CUSTOM-003"
             )
@@ -1040,8 +1092,8 @@ final class AppsViewModel: ObservableObject {
                 } catch {
                     historyFailure = ImportFailure(
                         title: "应用已删除",
-                        reason: "应用和本地文件已删除，但签名历史状态未能同步。",
-                        recovery: "稍后重新打开 Seal 检查日志",
+                        reason: "「\(app.displayName)」和本地文件已删除，但签名历史状态未能同步。",
+                        recovery: "稍后在设置日志中核对；如仍失败请重新打开 Seal",
                         code: "SEAL-HISTORY-003"
                     )
                 }
@@ -1054,7 +1106,7 @@ final class AppsViewModel: ObservableObject {
         } catch {
             alertFailure = ImportFailure(
                 title: "无法移除应用",
-                reason: "本地文件删除失败",
+                reason: "「\(app.displayName)」的本地文件删除失败。\n[\((error as NSError).domain) \((error as NSError).code)]",
                 recovery: "重试",
                 code: "SEAL-APP-003"
             )
@@ -1155,7 +1207,7 @@ final class AppsViewModel: ObservableObject {
             batchRefreshSession?.status = .failed(
                 ImportFailure(
                     title: "无法续签应用",
-                    reason: "续签队列执行失败",
+                    reason: "续签队列执行失败。\n[\((error as NSError).domain) \((error as NSError).code)]",
                     recovery: "重试",
                     code: "SEAL-RENEW-500a"
                 )
@@ -1673,7 +1725,7 @@ final class AppsViewModel: ObservableObject {
     private static func unexpectedSigningFailure(_ error: Error) -> ImportFailure {
         return ImportFailure(
             title: "签名失败",
-            reason: "签名流程遇到未预期错误，请稍后重试。",
+            reason: "签名流程遇到未预期错误，技术信息已写入脱敏日志。",
             recovery: "重试",
             code: "SEAL-SIGN-500"
         )
@@ -1781,13 +1833,6 @@ final class AppsViewModel: ObservableObject {
         reason: "请确认已连接 Wi-Fi 并开启 LocalDevVPN。若长时间无响应，请在设置中确认 LocalDevVPN 已连接后重试。",
         recovery: "重新检查",
         code: "SEAL-VPN-001"
-    )
-
-    private static let dataFailure = ImportFailure(
-        title: "无法读取应用",
-        reason: "本地数据读取失败",
-        recovery: "重试",
-        code: "SEAL-APP-002"
     )
 }
 

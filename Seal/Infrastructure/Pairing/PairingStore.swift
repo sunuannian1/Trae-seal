@@ -528,7 +528,7 @@ actor PairingStore {
 
     private static let invalidFailure = ImportFailure(
         title: "设备配对无效",
-        reason: "Seal 无法读取当前设备配对信息。",
+        reason: "无法读取设备配对信息（配对文件缺失、格式错误或缺少设备字段）。",
         recovery: "重新配对设备",
         code: "SEAL-PAIR-201"
     )
@@ -539,7 +539,7 @@ actor PairingStore {
     ) -> ImportFailure {
         ImportFailure(
             title: "设备配对不匹配",
-            reason: "当前设备配对信息与连接的 iPhone 不匹配。",
+            reason: "配对文件中的设备（\(fileUDID)）与当前连接的 iPhone（\(connectedUDID)）不一致。",
             recovery: "重新配对当前 iPhone",
             code: "SEAL-PAIR-206a"
         )
