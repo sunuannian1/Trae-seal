@@ -419,7 +419,14 @@ actor MinimuxerInstallChannel: InstallChannel {
         for attempt in 1...maxAttempts {
             do {
                 let syncProgress: @Sendable (Double) -> Void = { [onProgress] p in
-                    if p > 1.0 { return } // 哨兵仅用于自更新回主屏，普通安装忽略
+                    // Rust 哨兵（101 → 1.01）表示上传结束、installd 安装命令即将下发。
+                    // 原值透传给上层；coordinator 收到 p > 1.0 时把阶段从「正在传输」切到
+                    // 「正在安装」（普通安装也消费该哨兵），避免进度条停在 100% 干等
+                    // installd 的几十秒解压/复制。UI 以 p <= 1 判断显示进度条，1.01 不会误显。
+                    if p > 1.0 {
+                        Task { await onProgress(1.01) }
+                        return
+                    }
                     Task { await onProgress(p) }
                 }
                 if isSelfReplacement {

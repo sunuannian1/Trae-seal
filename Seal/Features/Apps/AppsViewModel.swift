@@ -1576,9 +1576,19 @@ final class AppsViewModel: ObservableObject {
         signingSession?.status = .running(stage)
     }
 
-    // 安装通道 AFC 上传阶段的真实进度（0-1）→ 刷新进度 UI
+    // 安装通道 AFC 上传阶段的真实进度（0-1）→ 刷新进度 UI。
+    // Rust 上传结束、installd 安装命令即将下发时的哨兵（>1.0，101→1.01）会让进度条
+    // 停在 100% 干等 installd 解压/复制，故在这里把阶段切到 .installing（文案「正在安装」），
+    // 进度归 1.0 收尾，避免 UI 一直显示「正在传输 100%」。
     private func updateInstallProgress(_ progress: Double) {
         guard signingSession != nil else { return }
+        if progress > 1.0 {
+            signingSession?.installProgress = 1.0
+            if case .running(let stage) = signingSession?.status, stage == .pushing {
+                signingSession?.status = .running(.installing)
+            }
+            return
+        }
         signingSession?.installProgress = progress
     }
 
