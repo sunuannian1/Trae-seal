@@ -9,7 +9,7 @@ enum SigningStage: String, CaseIterable, Equatable, Sendable {
     case installing
     case verifying
 
-    var title: String {
+    func stageTitle(isRenewal: Bool) -> String {
         switch self {
         case .waitingForChannel:
             return "正在连接设备"
@@ -22,7 +22,7 @@ enum SigningStage: String, CaseIterable, Equatable, Sendable {
         case .preparingProfiles:
             return "正在申请描述文件"
         case .signing:
-            return "正在签名"
+            return isRenewal ? "正在重新签名" : "正在签名"
         case .pushing:
             return "正在传输到设备"
         case .installing:

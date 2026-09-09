@@ -53,7 +53,7 @@ struct BatchRefreshView: View {
                     Spacer()
                     ProgressView().controlSize(.small)
                 }
-                Text("正在续签")
+                Text(viewModel.batchRefreshSession?.currentStage?.stageTitle(isRenewal: true) ?? "正在续签")
                     .font(.system(size: 14))
                     .foregroundStyle(Color.sealTextSecondary)
                 Text(viewModel.batchRefreshSession?.currentAppName ?? "当前 App")
@@ -126,7 +126,7 @@ struct BatchRefreshView: View {
                 .font(.system(size: 15, weight: .medium))
                 .lineLimit(1)
             Spacer(minLength: 10)
-            Text(title(for: item.state, isSeal: item.isSeal))
+            Text(title(for: item.state, isSeal: item.isSeal, stage: item.stage))
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(color(for: item.state))
                 .lineLimit(1)
@@ -183,7 +183,7 @@ struct BatchRefreshView: View {
     private var footerTip: String? {
         switch viewModel.batchRefreshSession?.status {
         case .preparing, .running:
-            return "请保持 Seal 打开，续签完成前不要锁屏或切换 App。"
+            return AppSigningPresentationHelpers.keepSealOpenTip
         case .preparingSealUpdate:
             return "更新 Seal 时会暂时回到主屏幕，安装完成后请重新打开。"
         case .failed:
@@ -211,13 +211,22 @@ struct BatchRefreshView: View {
         }
     }
 
-    private func title(for state: BatchRefreshSession.Item.State, isSeal: Bool) -> String {
+    private func title(for state: BatchRefreshSession.Item.State, isSeal: Bool, stage: SigningStage? = nil) -> String {
         switch state {
         case .completed: return isSeal ? "已更新" : "已完成"
-        case .running: return "续签中"
+        case .running: return runningStageTitle(stage)
         case .preparingSealUpdate: return "即将更新"
         case .waiting: return "等待中"
         case .failed: return "失败"
+        }
+    }
+
+    private func runningStageTitle(_ stage: SigningStage?) -> String {
+        switch stage {
+        case .signing: return "重新签名中"
+        case .pushing: return "传输中"
+        case .installing, .verifying: return "安装中"
+        default: return "准备中"
         }
     }
 

@@ -19,7 +19,7 @@ struct AppDetailView: View {
                 } footer: {
                     if app.belongsInInstalledList {
                         VStack(spacing: 10) {
-                            Button("立即续签") {
+                            Button(AppSigningPresentationHelpers.renewNowAction) {
                                 dismiss()
                                 Task { await viewModel.beginRenewalDirectly(for: app) }
                             }

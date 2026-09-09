@@ -1,6 +1,8 @@
 import Foundation
 
 enum SigningCertificateSelectionPolicy {
+    static let teamMismatchTitle = "开发者团队不匹配"
+
     static func validateAccountAndTeam(
         for app: AppRecord,
         account: AppleAccountRecord
@@ -10,7 +12,7 @@ enum SigningCertificateSelectionPolicy {
             if let teamID = normalized(app.signingTeamID) {
                 guard teamID.caseInsensitiveCompare(account.teamID) == .orderedSame else {
                     throw ImportFailure(
-                        title: "开发者团队不匹配",
+                        title: teamMismatchTitle,
                         reason: "当前 Seal 属于其他开发者团队，所选 Apple ID 无权续签。",
                         recovery: "使用签名 Seal 时的原 Apple ID 续签，或在续签页选择正确账号",
                         code: "SEAL-SELF-103"
@@ -46,7 +48,7 @@ enum SigningCertificateSelectionPolicy {
         }
         guard teamID.caseInsensitiveCompare(account.teamID) == .orderedSame else {
             throw ImportFailure(
-                title: "开发者团队不匹配",
+                title: teamMismatchTitle,
                 reason: "这个应用属于其他开发者团队，当前 Apple ID 无权续签。",
                 recovery: "使用原开发者团队的 Apple ID 续签，或用当前账号重新签名安装",
                 code: "SEAL-AUTH-112"

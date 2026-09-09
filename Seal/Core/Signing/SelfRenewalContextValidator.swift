@@ -22,7 +22,7 @@ enum SelfRenewalContextValidator {
            currentSigningTeamIdentifier.isEmpty == false,
            currentSigningTeamIdentifier.caseInsensitiveCompare(selectedAccount.teamID) != .orderedSame {
             throw ImportFailure(
-                title: "开发者团队不匹配",
+                title: SigningCertificateSelectionPolicy.teamMismatchTitle,
             reason: "当前 Seal 属于其他开发者团队，所选 Apple ID 无权续签。",
             recovery: "使用签名 Seal 时的原 Apple ID 续签，或用当前账号重新安装 Seal",
                 code: "SEAL-SELF-103"

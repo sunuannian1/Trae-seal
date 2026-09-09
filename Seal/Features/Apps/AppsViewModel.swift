@@ -1156,7 +1156,7 @@ final class AppsViewModel: ObservableObject {
         pendingVPNAction = action
         alertFailure = ImportFailure(
             title: "需要恢复连接",
-            reason: "请确认已连接 Wi-Fi 并开启 LocalDevVPN。若长时间无响应，请在设置中确认 LocalDevVPN 已连接后重试。",
+            reason: Self.connectionRecoveryReason,
             recovery: "恢复连接",
             code: "SEAL-INSTALL-706"
         )
@@ -1251,7 +1251,7 @@ final class AppsViewModel: ObservableObject {
             } else {
                 batchRefreshSession?.status = .running
             }
-            updateBatchItem(appID: app.id, name: app.displayName, isSeal: app.isSeal, state: itemState)
+            updateBatchItem(appID: app.id, name: app.displayName, isSeal: app.isSeal, state: itemState, stage: stage)
         case .appSucceeded(let index, let total, let app):
             batchRefreshSession?.currentIndex = index
             batchRefreshSession?.total = total
@@ -1291,15 +1291,17 @@ final class AppsViewModel: ObservableObject {
         appID: UUID,
         name: String,
         isSeal: Bool,
-        state: BatchRefreshSession.Item.State
+        state: BatchRefreshSession.Item.State,
+        stage: SigningStage? = nil
     ) {
         guard batchRefreshSession != nil else { return }
         if let index = batchRefreshSession?.items.firstIndex(where: { $0.id == appID }) {
             batchRefreshSession?.items[index].name = name
             batchRefreshSession?.items[index].isSeal = isSeal
             batchRefreshSession?.items[index].state = state
+            batchRefreshSession?.items[index].stage = stage
         } else {
-            batchRefreshSession?.items.append(.init(id: appID, name: name, isSeal: isSeal, state: state))
+            batchRefreshSession?.items.append(.init(id: appID, name: name, isSeal: isSeal, state: state, stage: stage))
         }
     }
 
@@ -1503,7 +1505,7 @@ final class AppsViewModel: ObservableObject {
             signingSession?.status = .succeeded(completed)
             try? await logStore?.append(
                 category: .signing,
-                message: isRenewal ? "应用续签与安装完成" : "应用签名与安装完成"
+                message: isRenewal ? "续签并安装成功" : "签名并安装成功"
             )
             await recordSigningHistory(
                 app: completed,
@@ -1838,9 +1840,11 @@ final class AppsViewModel: ObservableObject {
         return nil
     }
 
+    private static let connectionRecoveryReason = "请确认已连接 Wi-Fi 并开启 LocalDevVPN。若长时间无响应，请在设置中确认 LocalDevVPN 已连接后重试。"
+
     private static let connectionRecoveryFailure = ImportFailure(
         title: "需要恢复连接",
-        reason: "请确认已连接 Wi-Fi 并开启 LocalDevVPN。若长时间无响应，请在设置中确认 LocalDevVPN 已连接后重试。",
+        reason: connectionRecoveryReason,
         recovery: "重新检查",
         code: "SEAL-VPN-001"
     )

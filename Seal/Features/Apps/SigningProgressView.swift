@@ -52,13 +52,13 @@ struct SigningProgressView: View {
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text(runningStatusTitle(for: stage))
+                Text(stage.stageTitle(isRenewal: isRenewal))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.primary)
                 Spacer()
             }
 
-            Text(isRenewal ? "正在重新生成描述文件并安装" : stage.userVisibleTitle(isRenewal: isRenewal))
+            Text(runningSubtitle(for: stage))
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(Color.sealTextSecondary)
 
@@ -83,7 +83,7 @@ struct SigningProgressView: View {
             }
 
             if isRenewal {
-                Text("请保持 Seal 打开，不要锁屏或切换 App。")
+                Text(AppSigningPresentationHelpers.keepSealOpenTip)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.sealAccent)
             }
@@ -104,11 +104,11 @@ struct SigningProgressView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.sealTextSecondary)
             VStack(spacing: 8) {
-                timelineRow(index: 0, current: timelinePosition(for: stage), title: "准备环境")
-                timelineRow(index: 1, current: timelinePosition(for: stage), title: "准备 Apple ID 证书")
-                timelineRow(index: 2, current: timelinePosition(for: stage), title: "生成描述文件")
+                timelineRow(index: 0, current: timelinePosition(for: stage), title: "连接 LocalDevVPN")
+                timelineRow(index: 1, current: timelinePosition(for: stage), title: "申请证书")
+                timelineRow(index: 2, current: timelinePosition(for: stage), title: "申请描述文件")
                 timelineRow(index: 3, current: timelinePosition(for: stage), title: isRenewal ? "重新签名" : "签名 IPA")
-                timelineRow(index: 4, current: timelinePosition(for: stage), title: "安装并校验")
+                timelineRow(index: 4, current: timelinePosition(for: stage), title: "安装并验证")
             }
         }
     }
@@ -315,14 +315,22 @@ struct SigningProgressView: View {
         }
     }
 
-    private func runningStatusTitle(for stage: SigningStage) -> String {
+    private func runningSubtitle(for stage: SigningStage) -> String {
         switch stage {
-        case .pushing: return "正在传输到设备"
-        case .installing, .verifying: return "正在安装"
-        case .signing: return isRenewal ? "正在续签" : "正在签名"
-        case .preparingAppID, .preparingProfiles: return "正在生成描述文件"
-        case .preparingAccount, .preparingCertificate: return "正在准备 Apple ID 证书"
-        case .waitingForChannel: return isRenewal ? "正在准备续签环境" : "正在准备签名环境"
+        case .waitingForChannel:
+            return "LocalDevVPN"
+        case .preparingAccount, .preparingCertificate:
+            if let account = session?.account {
+                return "Apple ID：\(viewModel.fullEmail(for: account))"
+            }
+            return "Apple ID"
+        case .preparingAppID, .preparingProfiles:
+            if let session {
+                return "Bundle ID：\(runtimeBundleIdentifier(session))"
+            }
+            return "Bundle ID"
+        case .signing, .pushing, .installing, .verifying:
+            return session?.app.displayName ?? ""
         }
     }
 
@@ -479,23 +487,6 @@ struct SigningProgressView: View {
             .padding(24)
             .presentationDetents([.medium])
             .interactiveDismissDisabled(true)
-        }
-    }
-}
-
-
-private extension SigningStage {
-    func userVisibleTitle(isRenewal: Bool) -> String {
-        switch self {
-        case .waitingForChannel: return "准备设备"
-        case .preparingAccount: return "验证 Apple ID"
-        case .preparingCertificate: return "准备 Apple ID 证书"
-        case .preparingAppID: return "准备 App ID"
-        case .preparingProfiles: return "准备描述文件"
-        case .signing: return "正在签名"
-        case .pushing: return "正在传输到设备"
-        case .installing: return "正在安装"
-        case .verifying: return "正在验证安装"
         }
     }
 }

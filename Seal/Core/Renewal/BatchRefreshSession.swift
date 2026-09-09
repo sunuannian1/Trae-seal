@@ -22,6 +22,7 @@ struct BatchRefreshSession: Identifiable, Equatable, Sendable {
         var name: String
         var isSeal: Bool
         var state: State
+        var stage: SigningStage? = nil
     }
 
     let id: UUID

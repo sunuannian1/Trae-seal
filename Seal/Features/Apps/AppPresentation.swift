@@ -56,12 +56,7 @@ struct AppOperationPresentation: Equatable, Sendable {
         )
     }
 
-    var sheetTitle: String {
-        switch kind {
-        case .signing: "签名并安装"
-        case .renewal, .urgentRenewal, .expiredRenewal: "续签并安装"
-        }
-    }
+    var sheetTitle: String { primaryAction }
 
     var primaryAction: String {
         switch kind {
@@ -130,6 +125,9 @@ enum ProfileDisplayStatus: Equatable, Sendable {
 }
 
 enum AppSigningPresentationHelpers {
+    static let renewNowAction = "立即续签"
+    static let keepSealOpenTip = "请保持 Seal 打开，不要锁屏或切换 App。"
+
     static func certificateName(serial: String?) -> String {
         guard let serial, serial.isEmpty == false else { return "签名时创建" }
         return "Apple 开发证书 · \(compactSerial(serial))"

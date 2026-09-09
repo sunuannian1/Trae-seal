@@ -19,7 +19,7 @@ struct InstalledAppActionSheet: View {
             .padding(.bottom, 12)
         } footer: {
             VStack(spacing: 10) {
-                Button("立即续签") {
+                Button(AppSigningPresentationHelpers.renewNowAction) {
                     dismiss()
                     onRenew(selectedAccountID)
                 }
