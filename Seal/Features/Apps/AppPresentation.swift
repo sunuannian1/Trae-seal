@@ -166,10 +166,10 @@ enum AppSigningPresentationHelpers {
 
         if let serial = app.certificateSerialNumber, serial.isEmpty == false,
            app.signingTargets.isEmpty == false {
-            let expected = serial.filter(\.isHexDigit).uppercased()
+            let expected = SigningCertificateSelectionPolicy.normalizedSerialNumber(serial)
             let hasMatchingCertificate = app.signingTargets.contains { target in
                 target.certificateSerialNumbers.contains { value in
-                    value.filter(\.isHexDigit).uppercased() == expected
+                    SigningCertificateSelectionPolicy.normalizedSerialNumber(value) == expected
                 }
             }
             if hasMatchingCertificate == false { return .mismatch }

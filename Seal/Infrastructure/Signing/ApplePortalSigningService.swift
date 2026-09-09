@@ -1494,14 +1494,16 @@ actor ApplePortalSigningService {
 
         // 防御性校验：签名前确认主描述文件确实授权了当前证书。若证书已在 Apple 侧被
         // 轮换/吊销，这里用明确的序列号对照报错，避免落到 Rork 的模糊报错。
-        let chosenSerial = altCert.serialNumber.filter(\.isHexDigit).uppercased()
+        // 序列号跨来源比对须先归一化（AltSign 剥前导 0、Security 框架保留前导 0），
+        // 否则同一证书会因前导 0 差异被误判为“已被轮换”。
+        let chosenSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(altCert.serialNumber)
         let mainAuthData = materials.first(where: {
             $0.bundleID.caseInsensitiveCompare(mainBundleID) == .orderedSame
         })?.data ?? materials.first?.data
         if let mainAuthData,
            let authDetails = try? ProvisioningProfileReader().details(from: mainAuthData) {
             let authorizedSerials = authDetails.certificateSerialNumbers
-                .map { $0.filter(\.isHexDigit).uppercased() }
+                .map { SigningCertificateSelectionPolicy.normalizedSerialNumber($0) }
             if authorizedSerials.contains(chosenSerial) == false {
                 throw ApplePortalSigningFailure.make(
                     stage: .signing,

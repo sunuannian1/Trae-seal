@@ -118,7 +118,7 @@ struct ProvisioningProfileBinding: Codable, Equatable, Sendable {
     }
 
     private static func normalizedSerial(_ value: String) -> String {
-        value.filter(\.isHexDigit).uppercased()
+        SigningCertificateSelectionPolicy.normalizedSerialNumber(value)
     }
 
     private static func failure(title: String = "描述文件校验失败", reason: String, code: String) -> ImportFailure {

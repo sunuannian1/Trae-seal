@@ -352,9 +352,9 @@ actor SigningCoordinator {
                 )
             }
             if let serial = app.certificateSerialNumber {
-                let expected = serial.filter(\.isHexDigit).uppercased()
+                let expected = SigningCertificateSelectionPolicy.normalizedSerialNumber(serial)
                 let serials = Set(mainTarget.certificateSerialNumbers.map {
-                    $0.filter(\.isHexDigit).uppercased()
+                    SigningCertificateSelectionPolicy.normalizedSerialNumber($0)
                 })
                 guard serials.contains(expected) else {
                     app.signedArtifactStatus = .damaged

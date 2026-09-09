@@ -97,4 +97,16 @@ enum SigningCertificateSelectionPolicy {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
     }
+
+    /// 证书序列号跨来源比对前的统一归一化：只留十六进制、转大写、剥离前导 0。
+    ///
+    /// 根因：AltSign（`ALTCertificate.serialNumber`）走 big-number 十六进制，会剥掉最高半字节的
+    /// 前导 0；而 `ProvisioningProfileReader` 走 `SecCertificateCopySerialNumberData`，按原始 DER
+    /// 字节 `%02X` 拼串，会保留最高半字节的 0（如 `0E76A893…` vs `E76A893…`）。两者实为同一证书、
+    /// 同一序列号，直接 `caseInsensitiveCompare` 会误判成“证书已被轮换/不在授权列表”。
+    static func normalizedSerialNumber(_ serial: String) -> String {
+        let hex = serial.filter(\.isHexDigit).uppercased()
+        let trimmed = hex.drop(while: { $0 == "0" })
+        return trimmed.isEmpty ? "0" : String(trimmed)
+    }
 }

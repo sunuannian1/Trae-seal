@@ -979,7 +979,7 @@ final class SettingsViewModel: ObservableObject {
             }
         }
 
-        let normalizedSerial = serial.filter(\.isHexDigit).uppercased()
+        let normalizedSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(serial)
         let usableAppIDCount = Set(relatedApps.compactMap { app -> String? in
             let signedBundleID = app.mappedBundleIdentifier ?? app.preferredBundleIdentifier ?? app.originalBundleIdentifier
             guard let deviceID = app.signedDeviceIdentifier, deviceID.isEmpty == false else { return nil }
@@ -988,7 +988,7 @@ final class SettingsViewModel: ObservableObject {
                     && target.teamIdentifier.caseInsensitiveCompare(account.teamID) == .orderedSame
                     && target.profileExpirationDate > Date()
                     && target.deviceIdentifiers.contains(where: { $0.caseInsensitiveCompare(deviceID) == .orderedSame })
-                    && target.certificateSerialNumbers.contains(where: { $0.filter(\.isHexDigit).uppercased() == normalizedSerial })
+                    && target.certificateSerialNumbers.contains(where: { SigningCertificateSelectionPolicy.normalizedSerialNumber($0) == normalizedSerial })
             }) else { return nil }
             return signedBundleID.lowercased()
         }).count
