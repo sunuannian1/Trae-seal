@@ -49,18 +49,13 @@ struct SigningProgressView: View {
 
     private func runningContent(_ stage: SigningStage) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
+            HStack(spacing: 14) {
+                progressRing(stage)
                 Text(stage.stageTitle(isRenewal: isRenewal))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.primary)
                 Spacer()
             }
-
-            Text(runningSubtitle(for: stage))
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(Color.sealTextSecondary)
 
             if stage == .pushing, let progress = session?.installProgress, progress >= 0, progress <= 1 {
                 VStack(alignment: .leading, spacing: 4) {
@@ -88,7 +83,7 @@ struct SigningProgressView: View {
                     .foregroundStyle(Color.sealAccent)
             }
 
-            signingTimeline(stage)
+            stageProgressSection(stage)
         }
         .padding(14)
         .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -98,30 +93,70 @@ struct SigningProgressView: View {
         }
     }
 
-    private func signingTimeline(_ stage: SigningStage) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func stageProgressSection(_ stage: SigningStage) -> some View {
+        let current = timelinePosition(for: stage)
+        return VStack(alignment: .leading, spacing: 8) {
             Text(isRenewal ? "续签进度" : "签名进度")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.sealTextSecondary)
-            VStack(spacing: 8) {
-                timelineRow(index: 0, current: timelinePosition(for: stage), title: "连接 LocalDevVPN")
-                timelineRow(index: 1, current: timelinePosition(for: stage), title: "申请证书")
-                timelineRow(index: 2, current: timelinePosition(for: stage), title: "申请描述文件")
-                timelineRow(index: 3, current: timelinePosition(for: stage), title: isRenewal ? "重新签名" : "签名 IPA")
-                timelineRow(index: 4, current: timelinePosition(for: stage), title: "安装并验证")
+            HStack(spacing: 6) {
+                ForEach(0..<5, id: \.self) { index in
+                    progressSegment(index: index, current: current)
+                }
             }
         }
     }
 
-    private func timelineRow(index: Int, current: Int, title: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: index < current ? "checkmark.circle.fill" : (index == current ? "circle.fill" : "circle"))
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(index <= current ? Color.sealAccent : Color.sealTextSecondary.opacity(0.7))
-            Text(title)
-                .font(.system(size: 14, weight: index == current ? .semibold : .regular))
-                .foregroundStyle(index <= current ? Color.primary : Color.sealTextSecondary)
-            Spacer(minLength: 0)
+    @ViewBuilder
+    private func progressSegment(index: Int, current: Int) -> some View {
+        if index < current {
+            Capsule()
+                .fill(Color.sealSuccess)
+                .frame(height: 6)
+                .frame(maxWidth: .infinity)
+        } else if index == current {
+            PulseSegment()
+                .frame(height: 6)
+                .frame(maxWidth: .infinity)
+        } else {
+            Capsule()
+                .fill(Color.sealTextSecondary.opacity(0.22))
+                .frame(height: 6)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func progressRing(_ stage: SigningStage) -> some View {
+        let progress = overallProgress(for: stage)
+        return ZStack {
+            Circle()
+                .stroke(Color.sealTextSecondary.opacity(0.18), lineWidth: 5)
+            Circle()
+                .trim(from: 0, to: max(0.03, progress))
+                .stroke(Color.sealAccent, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.easeInOut(duration: 0.45), value: progress)
+            Text("\(Int(progress * 100))%")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.sealAccent)
+                .monospacedDigit()
+        }
+        .frame(width: 50, height: 50)
+    }
+
+    private func overallProgress(for stage: SigningStage) -> CGFloat {
+        switch stage {
+        case .waitingForChannel: 0.06
+        case .preparingAccount: 0.16
+        case .preparingCertificate: 0.30
+        case .preparingAppID: 0.42
+        case .preparingProfiles: 0.54
+        case .signing: 0.68
+        case .pushing:
+            let p = session?.installProgress ?? 0
+            return 0.78 + 0.12 * CGFloat(max(0, min(1, p)))
+        case .installing: 0.93
+        case .verifying: 0.99
         }
     }
 
@@ -315,25 +350,6 @@ struct SigningProgressView: View {
         }
     }
 
-    private func runningSubtitle(for stage: SigningStage) -> String {
-        switch stage {
-        case .waitingForChannel:
-            return "LocalDevVPN"
-        case .preparingAccount, .preparingCertificate:
-            if let account = session?.account {
-                return "Apple ID：\(viewModel.fullEmail(for: account))"
-            }
-            return "Apple ID"
-        case .preparingAppID, .preparingProfiles:
-            if let session {
-                return "Bundle ID：\(runtimeBundleIdentifier(session))"
-            }
-            return "Bundle ID"
-        case .signing, .pushing, .installing, .verifying:
-            return session?.app.displayName ?? ""
-        }
-    }
-
     private var successTitle: String {
         guard session != nil else { return "签名完成" }
         return isRenewal ? "续签并安装成功" : "签名并安装成功"
@@ -488,5 +504,20 @@ struct SigningProgressView: View {
             .presentationDetents([.medium])
             .interactiveDismissDisabled(true)
         }
+    }
+}
+
+private struct PulseSegment: View {
+    @State private var pulsing = false
+
+    var body: some View {
+        Capsule()
+            .fill(Color.sealAccent)
+            .opacity(pulsing ? 0.45 : 1.0)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+                    pulsing = true
+                }
+            }
     }
 }
