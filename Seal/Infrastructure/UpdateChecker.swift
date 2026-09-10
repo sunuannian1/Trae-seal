@@ -56,10 +56,16 @@ struct UpdateChecker {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let message = releaseBody?.isEmpty == false ? releaseBody! : "点击查看详情并更新"
 
+            // 下载跳转地址：优先 Release 详情页，回退到仓库页面
+            let downloadURL = (json["html_url"] as? String)
+                .flatMap(URL.init(string:))
+                ?? URL(string: "https://github.com/\(repo)/releases")
+
             return UpdateNotice(
                 version: tagName,
                 title: releaseName,
-                message: message
+                message: message,
+                downloadURL: downloadURL
             )
         } catch {
             return nil
@@ -72,4 +78,5 @@ struct UpdateNotice: Identifiable {
     let version: String
     let title: String
     let message: String
+    let downloadURL: URL?
 }

@@ -4,6 +4,7 @@ import SwiftUI
 struct UpdateNoticeView: View {
     let notice: UpdateNotice
     let onDismiss: () -> Void
+    @Environment(\.openURL) private var openURL
 
     /// 把 Release 的 Markdown body 拆成更新内容列表（逐行去 markdown 标记）
     private func changeItems(from markdown: String) -> [String] {
@@ -102,17 +103,40 @@ struct UpdateNoticeView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 16)
 
-                // 按钮
-                Button(action: onDismiss) {
-                    Text("知道了")
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.sealAccent)
-                        )
+                // 底部双按钮：取消 + 下载更新
+                HStack(spacing: 10) {
+                    Button(action: onDismiss) {
+                        Text("取消")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(.ultraThinMaterial)
+                            )
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(.white.opacity(0.15), lineWidth: 0.7)
+                            }
+                    }
+
+                    Button {
+                        if let url = notice.downloadURL {
+                            openURL(url)
+                        }
+                        onDismiss()
+                    } label: {
+                        Text("下载更新")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.sealAccent)
+                            )
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 20)
