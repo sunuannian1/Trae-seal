@@ -46,10 +46,9 @@ struct UpdateChecker {
                 if lastNotified == tagName {
                     return nil
                 }
+                // 仅自动检查标记已通知；手动检查不写记录，避免吃掉后续自动弹窗
+                UserDefaults.standard.set(tagName, forKey: lastNotifiedVersionKey)
             }
-
-            // 标记已通知
-            UserDefaults.standard.set(tagName, forKey: lastNotifiedVersionKey)
 
             // 从 Release 读取标题和正文，发版时可自定义
             let releaseName = json["name"] as? String ?? "发现新版本"
