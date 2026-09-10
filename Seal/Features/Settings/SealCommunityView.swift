@@ -90,7 +90,7 @@ struct SealCommunityView: View {
             icon: "bubble.left.and.bubble.right",
             title: "加入 QQ 交流群",
             subtitle: "点击直接跳转 QQ 加群",
-            value: qqGroupNumber,
+            value: nil,
             action: joinQQGroup
         )
     }

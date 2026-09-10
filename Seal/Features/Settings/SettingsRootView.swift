@@ -141,7 +141,8 @@ struct SettingsRootView: View {
                                 value: nil,
                                 icon: "person.3",
                                 showsChevron: true,
-                                iconColor: Color.sealAccent
+                                iconColor: Color.sealAccent,
+                                iconImage: "SealCommunityIcon"
                             )
                         }
                         .buttonStyle(.plain)
@@ -290,13 +291,24 @@ struct SettingsRootView: View {
         value: String?,
         icon: String,
         showsChevron: Bool,
-        iconColor: Color = Color.sealAccent
+        iconColor: Color = Color.sealAccent,
+        iconImage: String? = nil
     ) -> some View {
         HStack(spacing: 16) {
-            Image(systemName: icon)
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(iconColor)
-                .frame(width: 34)
+            if let iconImage {
+                Image(iconImage)
+                    .resizable()
+                    .renderingMode(.template)
+                    .scaledToFit()
+                    .frame(width: 20, height: 20)
+                    .foregroundStyle(iconColor)
+                    .frame(width: 34)
+            } else {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(iconColor)
+                    .frame(width: 34)
+            }
             Text(title)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
