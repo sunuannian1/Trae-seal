@@ -71,26 +71,31 @@
      `SelfAppRegistrar.swift:161/165`）当掉签根源。深读后发现签名安装成功时
      `installSignedIPA`（`SigningCoordinator.swift:608`）会用签名当时的 profile 过期时间
      覆盖 `expiryDate`，该写法语义正确，不是根因。
-- **根因（经用户确认后收敛）**：一轮提出「免费账号 profile 复用」假设后被推翻——
-  用户反馈签完 Seal「应用详情显示 7 天」，说明 `fetchProvisioningProfile` 确实每次拿到新
-  profile（注释「免费账号每次 fetch 自动重生成」成立），描述文件不是掉签原因。
-  排除 profile（7 天）与证书（免费证书一年）后，「明天就掉签闪退」只剩环境诱因：
-  **设备存储满（ENOSPC）+ 签名/续签时 TLS 握手失败（-1200）中断**，导致 Seal 自身签名
-  未真正完成、profile 未续上，次日启动被 iOS 拒绝。
-  - 签名前存储预检（`SEAL-SIGN-405`）、安装存储分类（`SEAL-INSTALL-702s`）、启动兜底
-    （`SEAL-APP-001`）均已具备，代码防护齐备，缺的是「存储不足时防患于未然的提示」。
-- **根因（已排除的假设，记录防回头重复推理）**：
+- **决定性根因（2026-09-09 20:37 crash 报告 `diskwrites_resource` 一锤定音）**：
+  **这不是「掉签」，也不是「存储满」——是 iOS「磁盘写入资源保护」终止。**
+  - 报告数据：`Event: disk writes`；29 分钟（1745s）写 **1073.76 MB**（615 KB/s 平均），
+    超过系统 86400s 周期限额 1073.74 MB；`Free disk space: 19.48 GB`（磁盘未满，
+    「存储满」判断被推翻）。
+  - 栈证据：栈顶 `libswift_Concurrency`（一个 Task 持续 active）→ Seal 函数 →
+    `Foundation`（Data 写文件）→ `libsystem_c` → `libsystem_kernel write`。
+    即 SealLogStore.append 的「全量重写 + atomic 写」在某个高频日志任务下放大成 1GB 写入。
+  - 真正代码缺陷：`SealLogStore.append`（`SealLogStore.swift:23-44`）**每条日志都做**
+    ① `read()` 全量读 + JSON decode 200 条 → ② 全量 JSON encode + `write(to:.atomic)`
+    （临时文件+rename 双写）+ `fileProtector.protect` → ③ error 级别再 `mirrorToDocuments()`
+    （全量 exportText + 写整个 Seal-log.txt）。任意高频日志（每秒几条）都会被放大成
+    615 KB/s 的持续磁盘写入，最终触发 iOS 磁盘写保护被杀。
+- **已排除的假设（记录防回头重复推理）**：
   - 免费账号 profile 复用（`fetchProvisioningProfile` 删除失败 `return profile`）——被「7 天」推翻。
   - `SelfAppRegistrar` 用 `metadata.expirationDate` 写库——语义正确，非根因。
   - 证书序列号归一化——已修（`34e6ae7` + rork-sign `formattedSerialNumberHex` 已剥前导零）。
-- **修复方向（待与用户确认后落）**：环境根因（存储满/TLS）无法靠改签名逻辑根治，可选加固——
-  (1) 签名/续签前增加更早的剩余存储提示；(2) TLS -1200 失败时的明确重试与诊断文案，
-  避免「静默中断」让用户误以为已签成功。
-- **涉及文件**：`ApplePortalSigningService.swift`（`signOnce` 存储预检 `SEAL-SIGN-405`、
-  `fetchProvisioningProfile`）、`AppContainer.swift`（启动兜底 `SEAL-APP-001`）、
-  `MinimuxerInstallChannel.swift`（`SEAL-INSTALL-702s`）、`SigningCoordinator.swift`。
-- **验证状态**：待真机。需用户提供某一次「掉签」现场的 Seal 日志或 `Seal-*.ips` 崩溃日志，
-  据此确认到底是存储满还是 TLS 中断导致，再做精准加固。
+  - 设备存储满（ENOSPC）、证书过期、TLS 中断——均非本次「闪退」直接根因。
+- **修复方向**：根治 `SealLogStore` 的 O(n) 全量重写放大问题——
+  (1) append 改为内存缓冲 + 节流批量落盘（debounce，去掉每条日志的全量读/写）；
+  (2) 落盘用非 atomic 覆盖写，去掉 `protect` 的每次调用（或大幅降低频率）；
+  (3) error 镜像 `mirrorToDocuments` 节流。同时定位「高频打日志」的任务源头一并收敛。
+- **涉及文件**：`SealLogStore.swift`（核心）；`AppsViewModel.swift` / `SettingsViewModel.swift`
+  （高频 append 调用点）。
+- **验证状态**：待修复后真机复验（观察 crash 是否消失 + 日志是否仍可读/导出）。
 
 ### 2026-09-09 · 修复 Seal 无法自续签
 

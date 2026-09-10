@@ -7,6 +7,14 @@ actor SealLogStore {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
+    // 内存缓冲：append 只更新内存，由 flush_task 节流批量落盘，
+    // 避免「每条日志都全量读 + JSON 重写 + atomic 双写 + protect」放大成 MB 级磁盘写。
+    private var buffer: [SealLogEntry] = []
+    private var bufferLoaded = false
+    private var pendingFlush = false
+    private var pendingMirror = false
+    private var hasProtectedOnce = false
+
     init(
         fileURL: URL,
         maximumEntries: Int = 200,
@@ -26,8 +34,8 @@ actor SealLogStore {
         message: String,
         code: String? = nil
     ) throws {
-        var values = try read()
-        values.append(
+        loadBufferIfNeeded()
+        buffer.append(
             SealLogEntry(
                 category: category,
                 level: level,
@@ -35,27 +43,31 @@ actor SealLogStore {
                 code: code.map(LogPrivacyRedactor.redact)
             )
         )
-        values = Array(values.suffix(maximumEntries))
-        try write(values)
-        // 错误日志镜像到 Documents（文件 App 可直接查看/分享），无需界面入口
+        buffer = Array(buffer.suffix(maximumEntries))
         if level == .error {
-            mirrorToDocuments()
+            pendingMirror = true
         }
+        scheduleFlush()
     }
 
     func entries() throws -> [SealLogEntry] {
-        Array(try read().map(Self.redacted).reversed())
+        loadBufferIfNeeded()
+        return Array(buffer.map(Self.redacted).reversed())
     }
 
     func clear() throws {
+        buffer = []
+        bufferLoaded = true
+        pendingMirror = false
         if FileManager.default.fileExists(atPath: fileURL.path) {
             try FileManager.default.removeItem(at: fileURL)
         }
     }
 
     func exportText() throws -> String {
+        loadBufferIfNeeded()
         let formatter = ISO8601DateFormatter()
-        return try entries().map { entry in
+        return buffer.reversed().map { entry in
             let code = entry.code.map { " [\($0)]" } ?? ""
             return "\(formatter.string(from: entry.timestamp)) \(entry.level.rawValue.uppercased()) \(entry.category.rawValue)\(code) \(entry.message)"
         }.joined(separator: "\n")
@@ -72,8 +84,31 @@ actor SealLogStore {
         )
     }
 
-    /// 把最近日志镜像到 Documents（文件 App → 我的 iPhone → Seal → Seal-log.txt），
-    /// 用户无需界面入口即可查看/分享完整诊断信息
+    private func loadBufferIfNeeded() {
+        guard !bufferLoaded else { return }
+        buffer = (try? read()) ?? []
+        bufferLoaded = true
+    }
+
+    private func scheduleFlush() {
+        guard !pendingFlush else { return }
+        pendingFlush = true
+        Task.detached { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            await self?.performFlush()
+        }
+    }
+
+    private func performFlush() {
+        pendingFlush = false
+        persist(buffer)
+        if pendingMirror {
+            pendingMirror = false
+            mirrorToDocuments()
+        }
+    }
+
+    /// 把最近日志镜像到 Documents（文件 App → 我的 iPhone → Seal → Seal-log.txt）
     private func mirrorToDocuments() {
         guard let documents = FileManager.default.urls(
             for: .documentDirectory,
@@ -87,21 +122,25 @@ actor SealLogStore {
         )
     }
 
+    private func persist(_ entries: [SealLogEntry]) {
+        let directory = fileURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        // 非 atomic：避免每条日志临时文件 + rename 的双写放大
+        try? encoder.encode(entries).write(to: fileURL)
+        if !hasProtectedOnce {
+            hasProtectedOnce = true
+            try? fileProtector.protect(fileURL)
+        }
+    }
+
     private func read() throws -> [SealLogEntry] {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
         return try decoder.decode(
             [SealLogEntry].self,
             from: Data(contentsOf: fileURL)
         )
-    }
-
-    private func write(_ entries: [SealLogEntry]) throws {
-        let directory = fileURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        try encoder.encode(entries).write(to: fileURL, options: .atomic)
-        try fileProtector.protect(fileURL)
     }
 }
