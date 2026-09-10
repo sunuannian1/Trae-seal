@@ -62,6 +62,8 @@ final class AppsViewModel: ObservableObject {
     private var pendingVPNAction: PendingVPNAction?
     private var hasLoaded = false
     private var loadGeneration = 0
+    // 自更新下载导入完成后，自动打开签名抽屉（仅 Seal 自身更新触发）
+    private var autoOpenSigningAfterImport = false
 
     private enum PendingVPNAction {
         case signing(
@@ -656,6 +658,15 @@ final class AppsViewModel: ObservableObject {
     }
 
     func importSelectedFile(_ url: URL) async {
+        await importSelectedFile(url, autoOpenSigning: false)
+    }
+
+    /// 应用内更新下载完成后导入 Seal 自身 IPA，成功后自动打开签名抽屉覆盖安装。
+    func importSelfUpdateFile(_ url: URL) async {
+        await importSelectedFile(url, autoOpenSigning: true)
+    }
+
+    private func importSelectedFile(_ url: URL, autoOpenSigning: Bool) async {
         guard let workflow, phase == .idle else { return }
         guard let operationLease = await acquireOperation(.importing) else { return }
         defer { releaseOperation(operationLease) }
@@ -669,6 +680,7 @@ final class AppsViewModel: ObservableObject {
         alertFailure = nil
         sheetFailure = nil
         isImportSheetPresented = false
+        autoOpenSigningAfterImport = autoOpenSigning
         phase = .preparing
         await workflow.prepare(sourceURL: url)
         await consumeWorkflowState()
@@ -1770,6 +1782,12 @@ final class AppsViewModel: ObservableObject {
             await load(force: true)
             lastImportCompletedInstalledApp = record.belongsInInstalledList
             importCompletionCount += 1
+            if autoOpenSigningAfterImport {
+                autoOpenSigningAfterImport = false
+                if let refreshed = apps.first(where: { $0.id == record.id }) {
+                    selectedOperationApp = refreshed
+                }
+            }
             if let cleanupFailure = await workflow.takeCleanupFailure() {
                 alertFailure = cleanupFailure
             }

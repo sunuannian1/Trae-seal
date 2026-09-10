@@ -102,7 +102,7 @@ struct RootTabView: View {
                         }
                         selection = .apps
                         Task {
-                            await appsViewModel.importSelectedFile(localURL)
+                            await appsViewModel.importSelfUpdateFile(localURL)
                             UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
                         }
                     }

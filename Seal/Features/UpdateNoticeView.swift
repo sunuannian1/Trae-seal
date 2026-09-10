@@ -210,10 +210,8 @@ struct UpdateNoticeView: View {
             do {
                 let localURL = try await UpdateIPADownloader.shared.download(
                     from: ipaURL,
-                    onProgress: { progress in
-                        Task { @MainActor in
-                            phase = .downloading(progress)
-                        }
+                    onProgress: { @MainActor progress in
+                        phase = .downloading(progress)
                     }
                 )
                 onInstall(localURL)

@@ -2,12 +2,12 @@ import Foundation
 
 /// 应用内更新 IPA 下载服务：流式下载到 Application Support/Seal/Downloads，带进度回调。
 /// 遵循项目「大包流式处理」纪律，不整块载入内存。
-final class UpdateIPADownloader {
+/// 无实例可变状态（struct），`shared` 满足 Swift 6 并发安全。
+struct UpdateIPADownloader {
     static let shared = UpdateIPADownloader()
 
-    private let fileManager = FileManager.default
-
     private var downloadsDirectory: URL {
+        let fileManager = FileManager.default
         let support = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -21,9 +21,10 @@ final class UpdateIPADownloader {
     /// 下载 IPA 到本地，返回落盘文件 URL。进度 0–1。
     func download(
         from url: URL,
-        onProgress: @escaping (Double) -> Void
+        onProgress: @escaping @Sendable (Double) async -> Void
     ) async throws -> URL {
         try Task.checkCancellation()
+        let fileManager = FileManager.default
         try fileManager.createDirectory(
             at: downloadsDirectory,
             withIntermediateDirectories: true
@@ -58,7 +59,7 @@ final class UpdateIPADownloader {
 
     /// 删除指定下载文件（导入成功后清理）。
     func deleteDownloadedFile(at url: URL) {
-        try? fileManager.removeItem(at: url)
+        try? FileManager.default.removeItem(at: url)
     }
 }
 
@@ -88,9 +89,9 @@ enum UpdateDownloadError: LocalizedError {
 }
 
 private final class ProgressDownloadDelegate: NSObject, URLSessionDownloadDelegate {
-    private let onProgress: (Double) -> Void
+    private let onProgress: @Sendable (Double) async -> Void
 
-    init(onProgress: @escaping (Double) -> Void) {
+    init(onProgress: @escaping @Sendable (Double) async -> Void) {
         self.onProgress = onProgress
     }
 
@@ -103,6 +104,14 @@ private final class ProgressDownloadDelegate: NSObject, URLSessionDownloadDelega
     ) {
         guard totalBytesExpectedToWrite > 0 else { return }
         let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        onProgress(min(max(fraction, 0), 1))
+        Task { await onProgress(min(max(fraction, 0), 1)) }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        // async download(for:delegate:) 返回后再由调用方 moveItem 到最终位置，这里无需处理。
     }
 }

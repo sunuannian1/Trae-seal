@@ -56,9 +56,40 @@
   先把 `provisioningProfiles → fetchProvisioningProfile → expirationDate` 这条链追清，
   再决定改哪，别先动 UI/文案。
 
+### 6. Swift 6 严格并发：新增「下载/回调」代码必踩的两个红线
+- 项目编译参数是 `-swift-version 6`（严格并发检查），新增带回调的服务类时必踩：
+  1. **非 Sendable class 暴露 `static let shared`** 直接报
+     `static property 'shared' is not concurrency-safe because non-'Sendable' type ... may have shared mutable state`。
+     → 无状态服务一律用 `struct`（不要 `final class` + 持 stored let），`FileManager`/依赖一律内联 `FileManager.default`，不要挂成 stored property。
+  2. **`URLSessionDownloadDelegate` 缺 required 方法 + 进度闭包非 `@Sendable`**：
+     新版 SDK 里 `didFinishDownloadingTo` 仍需实现（哪怕空实现，交由 async `download(for:delegate:)` 返回后再 `moveItem`）；
+     跨线程进度回调签名统一 **`@Sendable (Double) async -> Void`**（对齐 `InstallChannel.install(onProgress:)` 约定），
+     UI 侧闭包用 `@MainActor` 参数直接更新 `@State`，别内层再套 `Task`。
+- **涉及文件**：`UpdateIPADownloader.swift`（本次正例）、`InstallChannel` / `SigningCoordinator.onInstallProgress`（既有约定）。
+
 ---
 
 ## 二、历史记录
+
+### 2026-09-10 · 应用内更新首次云编译失败（Swift 6 并发红线）→ 已修复
+
+- **现象**：应用内更新方案（下载 → 导入 → 覆盖安装 Seal）首次提交云编译 run #42 报
+  `BUILD_FAILED: failure`，两个编译错误均落在新增的 `UpdateIPADownloader.swift`：
+  1. `static property 'shared' is not concurrency-safe because non-'Sendable' type
+     'UpdateIPADownloader' may have shared mutable state`。
+  2. `type 'ProgressDownloadDelegate' does not conform to protocol 'URLSessionDownloadDelegate'`。
+- **根因**：项目是 `-swift-version 6` 严格并发：
+  ① 下载器写成 `final class` 且持有 `let fileManager`（非 Sendable），却暴露 `static shared`；
+  ② delegate 缺 required `didFinishDownloadingTo`，且 `onProgress` 是非 `@Sendable` 闭包。
+- **修复**：
+  - `UpdateIPADownloader` 由 `final class` 改为 **`struct`**（去实例可变状态），`fileManager`
+    改为内联 `FileManager.default`；`shared` 因此并发安全。
+  - `ProgressDownloadDelegate` 补 `didFinishDownloadingTo` 空实现；`onProgress` 改
+    `@Sendable (Double) async -> Void`，对齐项目既有 `InstallChannel` 进度约定；
+    调用侧 `UpdateNoticeView.handleUpdate` 用 `@MainActor` 参数直接更新 `phase`。
+- **涉及文件**：`UpdateIPADownloader.swift`、`UpdateNoticeView.swift`。
+- **验证状态**：待云编译（run 复跑）+ 真机下载进度 / 自动弹签名抽屉验证。
+  教训已沉淀为「常犯坑位 6」。详见 `SEAL_INAPP_UPDATE_PLAN_20260910.md` §7。
 
 ### 2026-09-10 · 定位「今天签 Seal、明天掉签」根因
 
