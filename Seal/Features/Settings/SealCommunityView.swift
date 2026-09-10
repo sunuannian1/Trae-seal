@@ -2,7 +2,6 @@ import SwiftUI
 import UIKit
 
 struct SealCommunityView: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
     @State private var showRewardCode = false
@@ -26,7 +25,6 @@ struct SealCommunityView: View {
                     telegramCard
                 }
                 footerNote
-                primaryButton
             }
             .padding(20)
         }
@@ -47,8 +45,11 @@ struct SealCommunityView: View {
                 Circle()
                     .fill(Color.sealSurfaceElevated)
                     .frame(width: 84, height: 84)
-                Image(systemName: "person.3.fill")
-                    .font(.system(size: 34, weight: .medium))
+                Image("SealCommunityIcon")
+                    .resizable()
+                    .renderingMode(.template)
+                    .scaledToFit()
+                    .frame(width: 44, height: 44)
                     .foregroundStyle(Color.sealAccent)
             }
             Text("加入 Seal 社群")
@@ -116,15 +117,6 @@ struct SealCommunityView: View {
         }
         .padding(14)
         .background(Color.sealSurfaceElevated.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
-    private var primaryButton: some View {
-        Button {
-            dismiss()
-        } label: {
-            Text("我知道了")
-        }
-        .sealPrimaryAction(cornerRadius: 16)
     }
 
     private var rewardCodeSheet: some View {
@@ -223,8 +215,15 @@ struct SealCommunityView: View {
     }
 
     private func joinQQGroup() {
-        if let url = qqJoinURL {
-            openURL(url)
+        // qm.qq.com 短链在系统浏览器里会先落到展示群二维码的落地页（即「扫一扫」），
+        // 再唤起 QQ；改用 mqqapi scheme 直接打开 QQ 群资料卡，跳过中间落地页。
+        let scheme = URL(string: "mqqapi://card/show_pslcard?src_type=internal&version=1&uin=\(qqGroupNumber)&card_type=group&source=external")
+        if let scheme {
+            UIApplication.shared.open(scheme) { opened in
+                if !opened, let fallback = qqJoinURL {
+                    openURL(fallback)
+                }
+            }
         }
     }
 
