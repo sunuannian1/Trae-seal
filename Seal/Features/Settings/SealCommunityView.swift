@@ -122,10 +122,6 @@ struct SealCommunityView: View {
 
     private var rewardCodeSheet: some View {
         VStack(spacing: 20) {
-            Text(rewardTitle)
-                .font(.title2.weight(.bold))
-                .padding(.top, 24)
-
             if let image = UIImage(named: "SealCommunityReward") {
                 Image(uiImage: image)
                     .resizable()
@@ -161,6 +157,7 @@ struct SealCommunityView: View {
                 .foregroundStyle(Color.sealTextSecondary)
                 .padding(.bottom, 12)
         }
+        .padding(.top, 24)
         .presentationDetents([.medium, .large])
     }
 
