@@ -11,6 +11,7 @@ struct RootTabView: View {
     @AppStorage("appearance.mode") private var appearanceRawValue = SealAppearance.system.rawValue
     @AppStorage("appearance.accent") private var accentRawValue = SealAccentTheme.system.rawValue
     @State private var updateNotice: UpdateNotice?
+    @State private var lastUpdateCheckAt: Date?
 
     var body: some View {
         TabView(selection: $selection) {
@@ -42,9 +43,7 @@ struct RootTabView: View {
         .task {
             await LocalNetworkPermissionPrimer.requestIfNeeded()
             await performLaunchCheck(force: true)
-            if let notice = await UpdateChecker.shared.check() {
-                updateNotice = notice
-            }
+            await performUpdateCheck()
         }
         .onChange(of: appsViewModel.shouldOpenSettings) { shouldOpen in
             guard shouldOpen else { return }
@@ -57,7 +56,10 @@ struct RootTabView: View {
         }
         .onChange(of: scenePhase) { phase in
             guard phase == .active else { return }
-            Task { await performLaunchCheck() }
+            Task {
+                await performLaunchCheck()
+                await performUpdateCheck()
+            }
         }
         .onOpenURL { url in
             if LocalDevVPNLink.isCallback(url) {
@@ -93,6 +95,17 @@ struct RootTabView: View {
                     }
                 }
             }
+        }
+    }
+
+    @MainActor
+    private func performUpdateCheck() async {
+        if let last = lastUpdateCheckAt, Date().timeIntervalSince(last) < 60 {
+            return
+        }
+        lastUpdateCheckAt = Date()
+        if let notice = await UpdateChecker.shared.check() {
+            updateNotice = notice
         }
     }
 
