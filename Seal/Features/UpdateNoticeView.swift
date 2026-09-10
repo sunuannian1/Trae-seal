@@ -16,10 +16,6 @@ struct UpdateNoticeView: View {
         case failed(String)
     }
 
-    var hasIPAAsset: Bool {
-        notice.ipaDownloadURL != nil
-    }
-
     /// 把 Release 的 Markdown body 拆成更新内容列表（逐行去 markdown 标记）
     private func changeItems(from markdown: String) -> [String] {
         var items: [String] = []

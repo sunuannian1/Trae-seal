@@ -69,15 +69,13 @@ struct UpdateChecker {
                 }
             let ipaDownloadURL = (ipaAsset?["browser_download_url"] as? String)
                 .flatMap(URL.init(string:))
-            let ipaSize = (ipaAsset?["size"] as? NSNumber)?.int64Value ?? 0
 
             return UpdateNotice(
                 version: tagName,
                 title: releaseName,
                 message: message,
                 downloadURL: downloadURL,
-                ipaDownloadURL: ipaDownloadURL,
-                ipaSize: ipaSize
+                ipaDownloadURL: ipaDownloadURL
             )
         } catch {
             return nil
@@ -92,5 +90,4 @@ struct UpdateNotice: Identifiable {
     let message: String
     let downloadURL: URL?
     let ipaDownloadURL: URL?
-    let ipaSize: Int64
 }
