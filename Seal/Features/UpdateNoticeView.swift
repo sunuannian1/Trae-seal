@@ -39,7 +39,9 @@ struct UpdateNoticeView: View {
                 VStack(spacing: 12) {
                     Image("updateBell")
                         .resizable()
+                        .renderingMode(.template)
                         .scaledToFit()
+                        .foregroundStyle(Color.sealAccent)
                         .frame(width: 56, height: 56)
                     Text(notice.title)
                         .font(.headline.weight(.semibold))
