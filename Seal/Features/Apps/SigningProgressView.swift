@@ -146,17 +146,17 @@ struct SigningProgressView: View {
 
     private func overallProgress(for stage: SigningStage) -> CGFloat {
         switch stage {
-        case .waitingForChannel: 0.06
-        case .preparingAccount: 0.16
-        case .preparingCertificate: 0.30
-        case .preparingAppID: 0.42
-        case .preparingProfiles: 0.54
-        case .signing: 0.68
+        case .waitingForChannel: return 0.06
+        case .preparingAccount: return 0.16
+        case .preparingCertificate: return 0.30
+        case .preparingAppID: return 0.42
+        case .preparingProfiles: return 0.54
+        case .signing: return 0.68
         case .pushing:
             let p = session?.installProgress ?? 0
             return 0.78 + 0.12 * CGFloat(max(0, min(1, p)))
-        case .installing: 0.93
-        case .verifying: 0.99
+        case .installing: return 0.93
+        case .verifying: return 0.99
         }
     }
 
