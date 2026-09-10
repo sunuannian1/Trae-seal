@@ -71,7 +71,7 @@ struct SealCommunityView: View {
                     Text(rewardTitle)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white)
-                    Text("一杯奶茶，为作者补充更新动力")
+                    Text("你的支持，是作者更新的动力")
                         .font(.system(size: 13, weight: .regular))
                         .foregroundStyle(.white.opacity(0.82))
                 }
@@ -255,7 +255,7 @@ struct SealCommunityView: View {
 
     private func handleSaveResult(_ success: Bool) {
         if success {
-            presentAlert("已保存到相册", "请到微信「扫一扫」选择该图片向作者表示感谢")
+            presentAlert("已保存到相册", "感谢你的支持")
         } else {
             presentAlert("保存失败", "请在系统设置中允许 Seal 访问相册后重试")
         }
