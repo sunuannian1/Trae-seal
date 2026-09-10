@@ -37,7 +37,7 @@ struct UpdateNoticeView: View {
             VStack(spacing: 0) {
                 // 顶部：提醒图标 + 标题 + 版本号（居中）
                 VStack(spacing: 12) {
-                    Image("updateBell")
+                    Image("UpdateBell")
                         .resizable()
                         .renderingMode(.template)
                         .scaledToFit()
