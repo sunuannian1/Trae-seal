@@ -14,6 +14,7 @@ struct SealCommunityView: View {
     private let qqGroupNumber = "1093450608"
     private let qqJoinURL = URL(string: "https://qm.qq.com/q/OHpPXyHryI")
     private let telegramURL = URL(string: "https://t.me/addlist/vQ5-N-_q0qYzNWNl")
+    private let rewardTitle = "请作者喝杯奶茶"
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -67,10 +68,10 @@ struct SealCommunityView: View {
             HStack(spacing: 14) {
                 iconBadge("heart.fill", tint: .white, background: Color.white.opacity(0.20))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("赞赏支持")
+                    Text(rewardTitle)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(.white)
-                    Text("你的支持让 Seal 走得更远")
+                    Text("一杯奶茶，为作者补充更新动力")
                         .font(.system(size: 13, weight: .regular))
                         .foregroundStyle(.white.opacity(0.82))
                 }
@@ -98,7 +99,7 @@ struct SealCommunityView: View {
     private var telegramCard: some View {
         communityCard(
             icon: "paperplane",
-            title: "加入 Telegram 群",
+            title: "加入 Telegram 频道",
             subtitle: "国内需科学上网",
             value: nil,
             action: joinTelegram
@@ -121,7 +122,7 @@ struct SealCommunityView: View {
 
     private var rewardCodeSheet: some View {
         VStack(spacing: 20) {
-            Text("赞赏支持")
+            Text(rewardTitle)
                 .font(.title2.weight(.bold))
                 .padding(.top, 24)
 
@@ -141,7 +142,7 @@ struct SealCommunityView: View {
                     }
             }
 
-            Text("保存图片后，到微信「扫一扫」选择该图片即可赞赏")
+            Text("保存图片后，到微信「扫一扫」选择该图片即可")
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(Color.sealTextSecondary)
                 .multilineTextAlignment(.center)
@@ -254,7 +255,7 @@ struct SealCommunityView: View {
 
     private func handleSaveResult(_ success: Bool) {
         if success {
-            presentAlert("已保存到相册", "请到微信「扫一扫」选择该图片完成赞赏")
+            presentAlert("已保存到相册", "请到微信「扫一扫」选择该图片向作者表示感谢")
         } else {
             presentAlert("保存失败", "请在系统设置中允许 Seal 访问相册后重试")
         }
