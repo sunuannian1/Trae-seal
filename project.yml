@@ -89,6 +89,7 @@ targets:
                 - application/x-itunes-ipa
         ITSAppUsesNonExemptEncryption: false
         NSLocalNetworkUsageDescription: Seal 通过本地通道连接此设备并安装应用。
+        NSPhotoLibraryAddUsageDescription: Seal 需要访问相册以保存赞赏码图片。
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
