@@ -37,15 +37,10 @@ struct UpdateNoticeView: View {
             VStack(spacing: 0) {
                 // 顶部：提醒图标 + 标题 + 版本号（居中）
                 VStack(spacing: 12) {
-                    Image(systemName: "bell.badge.fill")
-                        .font(.system(size: 24, weight: .semibold))
-                        .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(.white)
+                    Image("updateBell")
+                        .resizable()
+                        .scaledToFit()
                         .frame(width: 56, height: 56)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.sealAccent)
-                        )
                     Text(notice.title)
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(.primary)
