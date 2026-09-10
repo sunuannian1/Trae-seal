@@ -35,24 +35,38 @@ struct UpdateNoticeView: View {
                 .transition(.opacity)
 
             VStack(spacing: 0) {
-                // 顶部：提醒图标 + 标题 + 版本号（居中）
-                VStack(spacing: 12) {
-                    Image("UpdateBell")
-                        .resizable()
-                        .renderingMode(.template)
-                        .scaledToFit()
-                        .foregroundStyle(Color.sealAccent)
-                        .frame(width: 56, height: 56)
-                    Text(notice.title)
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(notice.version)
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                // 头部：左渐变图标框 + 右标题/版本
+                HStack(spacing: 14) {
+                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.sealAccent, Color.sealAccent.opacity(0.75)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 52, height: 52)
+                        .overlay {
+                            Image("UpdateBell")
+                                .resizable()
+                                .renderingMode(.template)
+                                .scaledToFit()
+                                .foregroundStyle(.white)
+                                .frame(width: 26, height: 26)
+                        }
+                        .shadow(color: Color.sealAccent.opacity(0.35), radius: 8, x: 0, y: 4)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(notice.title)
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Text(notice.version)
+                            .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity)
                 .padding(.horizontal, 20)
                 .padding(.top, 24)
                 .padding(.bottom, 16)
