@@ -33,7 +33,7 @@ struct UpdateIPADownloader {
         let destination = downloadsDirectory
             .appending(path: "seal-update-\(UUID().uuidString).ipa")
 
-        let delegate = ProgressDownloadDelegate(onProgress: onProgress)
+        let delegate = ProgressDownloadDelegate(onProgress: onProgress, destination: destination)
         let (temporaryURL, response): (URL, URLResponse)
         do {
             (temporaryURL, response) = try await URLSession.shared.download(
@@ -41,18 +41,24 @@ struct UpdateIPADownloader {
                 delegate: delegate
             )
         } catch {
+            try? fileManager.removeItem(at: destination)
             throw UpdateDownloadError.transport(error)
         }
 
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            try? fileManager.removeItem(at: destination)
             throw UpdateDownloadError.badHTTPStatus
         }
 
-        do {
-            try fileManager.moveItem(at: temporaryURL, to: destination)
-        } catch {
-            try? fileManager.removeItem(at: temporaryURL)
-            throw UpdateDownloadError.saveFailed
+        // Apple 语义：didFinishDownloadingTo 的 location 仅在回调内有效，已在回调内移到 destination。
+        // 若实现未生效（destination 不存在），用 async 返回的 temporaryURL 兜底再移一次。
+        if !fileManager.fileExists(atPath: destination.path) {
+            do {
+                try fileManager.moveItem(at: temporaryURL, to: destination)
+            } catch {
+                try? fileManager.removeItem(at: temporaryURL)
+                throw UpdateDownloadError.saveFailed
+            }
         }
         return destination
     }
@@ -90,9 +96,11 @@ enum UpdateDownloadError: LocalizedError {
 
 private final class ProgressDownloadDelegate: NSObject, URLSessionDownloadDelegate {
     private let onProgress: @Sendable (Double) async -> Void
+    private let destination: URL
 
-    init(onProgress: @escaping @Sendable (Double) async -> Void) {
+    init(onProgress: @escaping @Sendable (Double) async -> Void, destination: URL) {
         self.onProgress = onProgress
+        self.destination = destination
     }
 
     func urlSession(
@@ -112,6 +120,7 @@ private final class ProgressDownloadDelegate: NSObject, URLSessionDownloadDelega
         downloadTask: URLSessionDownloadTask,
         didFinishDownloadingTo location: URL
     ) {
-        // async download(for:delegate:) 返回后再由调用方 moveItem 到最终位置，这里无需处理。
+        // location 仅在回调内有效，须立即移动到永久位置，否则会被系统删除。
+        try? FileManager.default.moveItem(at: location, to: destination)
     }
 }

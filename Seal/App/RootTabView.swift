@@ -70,9 +70,6 @@ struct RootTabView: View {
                     await settingsViewModel.testLocalDevVPN()
                     await appsViewModel.resumePendingVPNAction()
                     await performLaunchCheck(force: true)
-            if let notice = await UpdateChecker.shared.check() {
-                updateNotice = notice
-            }
                 }
                 return
             }
