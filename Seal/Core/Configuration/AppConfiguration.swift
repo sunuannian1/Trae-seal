@@ -38,10 +38,4 @@ enum AppConfiguration {
         static let installationVerificationRetries = 8
         static let installationVerificationDelayMilliseconds = 650
     }
-
-    // MARK: - 公告
-    enum Announcement {
-        static let remoteURL = URL(string: "https://raw.githubusercontent.com/sunuannian1/Seal-Releases/main/announcements.json")!
-        static let dismissedKey = "announcement.dismissed_ids"
-    }
 }

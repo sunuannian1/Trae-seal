@@ -11,7 +11,6 @@ struct RootTabView: View {
     @AppStorage("appearance.mode") private var appearanceRawValue = SealAppearance.system.rawValue
     @AppStorage("appearance.accent") private var accentRawValue = SealAccentTheme.system.rawValue
     @State private var updateNotice: UpdateNotice?
-    @State private var announcement: Announcement?
 
     var body: some View {
         TabView(selection: $selection) {
@@ -43,7 +42,6 @@ struct RootTabView: View {
         .task {
             await LocalNetworkPermissionPrimer.requestIfNeeded()
             await performLaunchCheck(force: true)
-            announcement = await AnnouncementService.shared.fetch().first
             if let notice = await UpdateChecker.shared.check() {
                 updateNotice = notice
             }
@@ -70,9 +68,9 @@ struct RootTabView: View {
                     await settingsViewModel.testLocalDevVPN()
                     await appsViewModel.resumePendingVPNAction()
                     await performLaunchCheck(force: true)
-                    if let notice = await UpdateChecker.shared.check() {
-                        updateNotice = notice
-                    }
+            if let notice = await UpdateChecker.shared.check() {
+                updateNotice = notice
+            }
                 }
                 return
             }
@@ -88,22 +86,7 @@ struct RootTabView: View {
             Task { await appsViewModel.importSelectedFile(url) }
         }
         .overlay {
-            if let announcement {
-                AnnouncementView(
-                    announcement: announcement,
-                    onDismiss: {
-                        AnnouncementService.shared.markDismissed(announcement.id)
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            self.announcement = nil
-                        }
-                    },
-                    onHideThisTime: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            self.announcement = nil
-                        }
-                    }
-                )
-            } else if let notice = updateNotice {
+            if let notice = updateNotice {
                 UpdateNoticeView(notice: notice) {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         updateNotice = nil
