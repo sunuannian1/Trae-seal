@@ -61,11 +61,23 @@ struct UpdateChecker {
                 .flatMap(URL.init(string:))
                 ?? URL(string: "https://github.com/\(repo)/releases")
 
+            // 从 attachments 里找 .ipa 附件，供应用内直接下载覆盖安装
+            let ipaAsset = (json["assets"] as? [[String: Any]])?
+                .first { attachment in
+                    let name = attachment["name"] as? String ?? ""
+                    return name.lowercased().hasSuffix(".ipa")
+                }
+            let ipaDownloadURL = (ipaAsset?["browser_download_url"] as? String)
+                .flatMap(URL.init(string:))
+            let ipaSize = (ipaAsset?["size"] as? NSNumber)?.int64Value ?? 0
+
             return UpdateNotice(
                 version: tagName,
                 title: releaseName,
                 message: message,
-                downloadURL: downloadURL
+                downloadURL: downloadURL,
+                ipaDownloadURL: ipaDownloadURL,
+                ipaSize: ipaSize
             )
         } catch {
             return nil
@@ -79,4 +91,6 @@ struct UpdateNotice: Identifiable {
     let title: String
     let message: String
     let downloadURL: URL?
+    let ipaDownloadURL: URL?
+    let ipaSize: Int64
 }

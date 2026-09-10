@@ -23,11 +23,15 @@ struct AboutView: View {
         .sealScreenBackground()
         .overlay {
             if let notice = updateNotice {
-                UpdateNoticeView(notice: notice) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        updateNotice = nil
-                    }
-                }
+                UpdateNoticeView(
+                    notice: notice,
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            updateNotice = nil
+                        }
+                    },
+                    onInstall: nil
+                )
             }
         }
         .alert("已是最新版本", isPresented: $showNoUpdateAlert) {

@@ -4,7 +4,21 @@ import SwiftUI
 struct UpdateNoticeView: View {
     let notice: UpdateNotice
     let onDismiss: () -> Void
+    /// 下载完成后回调本地文件 URL 触发导入安装；为 nil 时回退跳转浏览器。
+    let onInstall: ((URL) -> Void)?
     @Environment(\.openURL) private var openURL
+
+    @State private var phase: DownloadPhase = .idle
+
+    private enum DownloadPhase {
+        case idle
+        case downloading(Double)
+        case failed(String)
+    }
+
+    var hasIPAAsset: Bool {
+        notice.ipaDownloadURL != nil
+    }
 
     /// 把 Release 的 Markdown body 拆成更新内容列表（逐行去 markdown 标记）
     private func changeItems(from markdown: String) -> [String] {
@@ -103,7 +117,7 @@ struct UpdateNoticeView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 16)
 
-                // 底部双按钮：取消 + 下载更新
+                // 底部双按钮：取消 + 下载更新 / 进度
                 HStack(spacing: 10) {
                     Button(action: onDismiss) {
                         Text("取消")
@@ -121,25 +135,43 @@ struct UpdateNoticeView: View {
                             }
                     }
 
-                    Button {
-                        if let url = notice.downloadURL {
-                            openURL(url)
+                    Button(action: handleUpdate) {
+                        Group {
+                            switch phase {
+                            case .idle:
+                                Text("下载更新")
+                            case .downloading(let progress):
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("\(Int(progress * 100))%")
+                                }
+                            case .failed:
+                                Text("重试")
+                            }
                         }
-                        onDismiss()
-                    } label: {
-                        Text("下载更新")
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.sealAccent)
-                            )
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.sealAccent)
+                        )
                     }
+                    .disabled(isDownloading)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 20)
+
+                if case .failed(let reason) = phase {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
+                }
             }
             .frame(width: 300)
             .background(
@@ -152,6 +184,44 @@ struct UpdateNoticeView: View {
             }
             .shadow(color: .black.opacity(0.25), radius: 30, x: 0, y: 12)
             .transition(.scale(scale: 0.9).combined(with: .opacity))
+        }
+    }
+
+    private var isDownloading: Bool {
+        if case .downloading = phase { return true }
+        return false
+    }
+
+    @MainActor
+    private func handleUpdate() {
+        guard !isDownloading else { return }
+
+        // 无 IPA 附件或未提供安装回调：回退为跳转浏览器 Release 页
+        guard let ipaURL = notice.ipaDownloadURL, let onInstall else {
+            if let url = notice.downloadURL {
+                openURL(url)
+            }
+            onDismiss()
+            return
+        }
+
+        phase = .downloading(0)
+        Task {
+            do {
+                let localURL = try await UpdateIPADownloader.shared.download(
+                    from: ipaURL,
+                    onProgress: { progress in
+                        Task { @MainActor in
+                            phase = .downloading(progress)
+                        }
+                    }
+                )
+                onInstall(localURL)
+            } catch let error as UpdateDownloadError {
+                phase = .failed(error.errorDescription ?? "下载失败")
+            } catch {
+                phase = .failed("下载失败，请稍后重试")
+            }
         }
     }
 }

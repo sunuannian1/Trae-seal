@@ -903,6 +903,9 @@ actor SigningCoordinator {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         guard normalizedTarget.isEmpty == false else { return }
+        // Seal 自身更新属于覆盖安装（升级版本），不是第三方同名冲突，直接放行。
+        // 第三方同 Bundle ID 仍走下方去重拦截。
+        if app.isSeal { return }
         let records = try await appStore.fetchAll()
         guard let conflicting = records.first(where: { record in
             record.id != app.id

@@ -89,11 +89,24 @@ struct RootTabView: View {
         }
         .overlay {
             if let notice = updateNotice {
-                UpdateNoticeView(notice: notice) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        updateNotice = nil
+                UpdateNoticeView(
+                    notice: notice,
+                    onDismiss: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            updateNotice = nil
+                        }
+                    },
+                    onInstall: { localURL in
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            updateNotice = nil
+                        }
+                        selection = .apps
+                        Task {
+                            await appsViewModel.importSelectedFile(localURL)
+                            UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
+                        }
                     }
-                }
+                )
             }
         }
     }
