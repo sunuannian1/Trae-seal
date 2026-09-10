@@ -101,28 +101,43 @@ struct SigningProgressView: View {
                 .foregroundStyle(Color.sealTextSecondary)
             HStack(spacing: 6) {
                 ForEach(0..<5, id: \.self) { index in
-                    progressSegment(index: index, current: current)
+                    progressSegment(index: index, current: current, fraction: segmentFraction(for: stage))
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func progressSegment(index: Int, current: Int) -> some View {
+    private func progressSegment(index: Int, current: Int, fraction: CGFloat) -> some View {
         if index < current {
             Capsule()
                 .fill(Color.sealSuccess)
                 .frame(height: 6)
                 .frame(maxWidth: .infinity)
         } else if index == current {
-            PulseSegment()
-                .frame(height: 6)
+            CurrentSegmentFill(fraction: fraction)
                 .frame(maxWidth: .infinity)
         } else {
             Capsule()
                 .fill(Color.sealTextSecondary.opacity(0.22))
                 .frame(height: 6)
                 .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func segmentFraction(for stage: SigningStage) -> CGFloat {
+        switch stage {
+        case .waitingForChannel: return 0.5
+        case .preparingAccount: return 0.33
+        case .preparingCertificate: return 0.67
+        case .preparingAppID: return 0.33
+        case .preparingProfiles: return 0.67
+        case .signing: return 0.5
+        case .pushing:
+            let p = session?.installProgress ?? 0
+            return 0.3 + 0.3 * CGFloat(max(0, min(1, p)))
+        case .installing: return 0.8
+        case .verifying: return 1.0
         }
     }
 
@@ -507,17 +522,21 @@ struct SigningProgressView: View {
     }
 }
 
-private struct PulseSegment: View {
-    @State private var pulsing = false
+private struct CurrentSegmentFill: View {
+    let fraction: CGFloat
 
     var body: some View {
-        Capsule()
-            .fill(Color.sealAccent)
-            .opacity(pulsing ? 0.45 : 1.0)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
-                    pulsing = true
-                }
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.sealTextSecondary.opacity(0.22))
+                Capsule()
+                    .fill(Color.sealAccent)
+                    .frame(width: geo.size.width * clampedFraction)
             }
+        }
+        .frame(height: 6)
     }
+
+    private var clampedFraction: CGFloat { max(0, min(1, fraction)) }
 }
