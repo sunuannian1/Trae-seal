@@ -41,9 +41,56 @@
 - `rg -rn` 里的 `-r` 是「替换」flag（会把匹配内容替换成 `n`），不是行号；行号用 `-n`。
   避免 `-r` 与 `-n`、`-l` 混用导致的输出错乱。
 
+### 4. 云编译结果别用 `gh run watch --exit-status` 的退出码当「成败」信号
+- `gh run watch` 后台任务返回非零 exit code，是命令自身/超时问题，**不代表工作流失败**。
+  判断成败一律看 `gh run list` / `gh run view` 的 `completed success/failure` 状态；
+  别拿后台任务的 exit code 反推「云编译失败」，否则会把成功的构建误报成失败。
+
+### 5. 掉签根因别一上来就甩给「证书过期/描述文件来源」
+- 「今天签、明天掉」不是证书过期（免费证书有效期一年），也不该先怀疑 `SelfAppRegistrar`
+  用当前 bundle 的 `expirationDate` 写库（签名安装成功时 `installSignedIPA` 会用签名当时的
+  profile 过期时间覆盖它）。
+- 真正要查的是「签名/续签时 profile 是否被复用、有没有刷新有效期」：
+  `fetchProvisioningProfile`（`ApplePortalSigningService.swift:1213-1215`）对免费账号
+  删除 profile 失败会直接复用现有 profile，其过期时间就是签名后 App 的有效期。
+  先把 `provisioningProfiles → fetchProvisioningProfile → expirationDate` 这条链追清，
+  再决定改哪，别先动 UI/文案。
+
 ---
 
 ## 二、历史记录
+
+### 2026-09-10 · 定位「今天签 Seal、明天掉签」根因
+
+- **现象**：用户报告「今天签名安装 Seal，明天就掉签、闪退打不开」；真机日志另有
+  TLS 握手失败（NSURLErrorDomain -1200）与设备存储满（No space left / errno 28/ENOSPC）。
+- **排查过程（含两次误判，均已纠正）**：
+  1. 误判一：把 `gh run watch --exit-status` 的后台任务返回非零 exit code 当成「社群页
+     云编译失败」，实际 `gh run list` 显示 `completed success`（8m55s）。教训见「常犯坑位 4」。
+  2. 误判二：一度把 `SelfAppRegistrar`（`expiryDate: metadata.expirationDate`，
+     `SelfAppRegistrar.swift:161/165`）当掉签根源。深读后发现签名安装成功时
+     `installSignedIPA`（`SigningCoordinator.swift:608`）会用签名当时的 profile 过期时间
+     覆盖 `expiryDate`，该写法语义正确，不是根因。
+- **根因（经用户确认后收敛）**：一轮提出「免费账号 profile 复用」假设后被推翻——
+  用户反馈签完 Seal「应用详情显示 7 天」，说明 `fetchProvisioningProfile` 确实每次拿到新
+  profile（注释「免费账号每次 fetch 自动重生成」成立），描述文件不是掉签原因。
+  排除 profile（7 天）与证书（免费证书一年）后，「明天就掉签闪退」只剩环境诱因：
+  **设备存储满（ENOSPC）+ 签名/续签时 TLS 握手失败（-1200）中断**，导致 Seal 自身签名
+  未真正完成、profile 未续上，次日启动被 iOS 拒绝。
+  - 签名前存储预检（`SEAL-SIGN-405`）、安装存储分类（`SEAL-INSTALL-702s`）、启动兜底
+    （`SEAL-APP-001`）均已具备，代码防护齐备，缺的是「存储不足时防患于未然的提示」。
+- **根因（已排除的假设，记录防回头重复推理）**：
+  - 免费账号 profile 复用（`fetchProvisioningProfile` 删除失败 `return profile`）——被「7 天」推翻。
+  - `SelfAppRegistrar` 用 `metadata.expirationDate` 写库——语义正确，非根因。
+  - 证书序列号归一化——已修（`34e6ae7` + rork-sign `formattedSerialNumberHex` 已剥前导零）。
+- **修复方向（待与用户确认后落）**：环境根因（存储满/TLS）无法靠改签名逻辑根治，可选加固——
+  (1) 签名/续签前增加更早的剩余存储提示；(2) TLS -1200 失败时的明确重试与诊断文案，
+  避免「静默中断」让用户误以为已签成功。
+- **涉及文件**：`ApplePortalSigningService.swift`（`signOnce` 存储预检 `SEAL-SIGN-405`、
+  `fetchProvisioningProfile`）、`AppContainer.swift`（启动兜底 `SEAL-APP-001`）、
+  `MinimuxerInstallChannel.swift`（`SEAL-INSTALL-702s`）、`SigningCoordinator.swift`。
+- **验证状态**：待真机。需用户提供某一次「掉签」现场的 Seal 日志或 `Seal-*.ips` 崩溃日志，
+  据此确认到底是存储满还是 TLS 中断导致，再做精准加固。
 
 ### 2026-09-09 · 修复 Seal 无法自续签
 
