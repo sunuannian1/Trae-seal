@@ -5,6 +5,7 @@ struct SealCommunityView: View {
     @Environment(\.openURL) private var openURL
 
     @State private var showRewardCode = false
+    @State private var showGzhCode = false
     @State private var saveCoordinator: AlbumSaveCoordinator?
 
     @State private var alertTitle = ""
@@ -22,6 +23,7 @@ struct SealCommunityView: View {
                 header
                 VStack(spacing: 12) {
                     rewardCard
+                    gzhCard
                     qqCard
                     telegramCard
                 }
@@ -33,6 +35,7 @@ struct SealCommunityView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sealScreenBackground()
         .sheet(isPresented: $showRewardCode) { rewardCodeSheet }
+        .sheet(isPresented: $showGzhCode) { gzhCodeSheet }
         .alert(alertTitle, isPresented: $showAlert) {
             Button("好的", role: .cancel) { }
         } message: {
@@ -86,10 +89,19 @@ struct SealCommunityView: View {
         .buttonStyle(.plain)
     }
 
+    private var gzhCard: some View {
+        communityCard(
+            icon: "newspaper",
+            title: "关注公众号",
+            subtitle: "更新动态 · 使用教程 · 官方通知",
+            value: nil,
+            action: { showGzhCode = true }
+        )
+    }
+
     private var qqCard: some View {
         communityCard(
             icon: "bubble.left.and.bubble.right",
-            title: "加入 QQ 交流群",
             subtitle: "点击直接跳转 QQ 加群",
             value: nil,
             action: joinQQGroup
@@ -145,7 +157,7 @@ struct SealCommunityView: View {
                 .padding(.horizontal, 24)
 
             Button {
-                saveRewardCode()
+                saveCodeToAlbum(imageName: "SealCommunityReward")
             } label: {
                 Text("保存到相册")
             }
@@ -153,6 +165,53 @@ struct SealCommunityView: View {
             .padding(.horizontal, 24)
 
             Button("关闭") { showRewardCode = false }
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Color.sealTextSecondary)
+                .padding(.bottom, 12)
+        }
+        .padding(.top, 24)
+        .presentationDetents([.medium, .large])
+    }
+
+    private var gzhCodeSheet: some View {
+        VStack(spacing: 20) {
+            if let image = UIImage(named: "SealCommunityGzh") {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 240, height: 240)
+            } else {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color.sealSurfaceElevated)
+                    .frame(width: 240, height: 240)
+                    .overlay {
+                        Text("公众号二维码未加载")
+                            .font(.footnote)
+                            .foregroundStyle(Color.sealTextSecondary)
+                    }
+            }
+
+            Text("关注公众号，第一时间获取版本动态、教程与官方通知")
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(Color.sealTextSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+
+            Text("保存图片后，到微信「扫一扫」选择该图片即可关注")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(Color.sealTextSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+
+            Button {
+                saveCodeToAlbum(imageName: "SealCommunityGzh")
+            } label: {
+                Text("保存到相册")
+            }
+            .sealPrimaryAction(cornerRadius: 14)
+            .padding(.horizontal, 24)
+
+            Button("关闭") { showGzhCode = false }
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(Color.sealTextSecondary)
                 .padding(.bottom, 12)
@@ -231,9 +290,9 @@ struct SealCommunityView: View {
         }
     }
 
-    private func saveRewardCode() {
-        guard let image = UIImage(named: "SealCommunityReward") else {
-            presentAlert("保存失败", "赞赏码未加载，请稍后重试")
+    private func saveCodeToAlbum(imageName: String) {
+        guard let image = UIImage(named: imageName) else {
+            presentAlert("保存失败", "图片未加载，请稍后重试")
             return
         }
         let coordinator = AlbumSaveCoordinator { error in
