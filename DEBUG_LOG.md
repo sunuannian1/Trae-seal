@@ -57,30 +57,73 @@
   再决定改哪，别先动 UI/文案。
 
 ### 6. Swift 6 严格并发：新增「下载/回调」代码必踩的两个红线
-- 项目编译参数是 `-swift-version 6`（严格并发检查），新增带回调的服务类时必踩：
+- **确凿证据**：云编译日志里 `swift-frontend ... -target arm64-apple-ios16.0 ... -swift-version 6 -Onone`
+  （Xcode 26.5 强制 **Swift 6 语言模式**，project.yml 未显式写但流水线/工具链默认按 6）。新增带回调的服务类时必踩两个红线：
   1. **非 Sendable class 暴露 `static let shared`** 直接报
-     `static property 'shared' is not concurrency-safe because non-'Sendable' type ... may have shared mutable state`。
-     → 无状态服务一律用 `struct`（不要 `final class` + 持 stored let），`FileManager`/依赖一律内联 `FileManager.default`，不要挂成 stored property。
-  2. **`URLSessionDownloadDelegate` 缺 required 方法 + 进度闭包非 `@Sendable`**：
-     新版 SDK 里 `didFinishDownloadingTo` 仍需实现（哪怕空实现，交由 async `download(for:delegate:)` 返回后再 `moveItem`）；
-     跨线程进度回调签名统一 **`@Sendable (Double) async -> Void`**（对齐 `InstallChannel.install(onProgress:)` 约定），
+     `static property 'shared' is not concurrency-safe because non-'Sendable' type 'UpdateIPADownloader' may have shared mutable state`，
+     后跟 note：`class 'UpdateIPADownloader' does not conform to the 'Sendable' protocol`，
+     并给两条修复建议 note：`add '@MainActor' to make static property 'shared' part of global actor 'MainActor'`
+     / `disable concurrency-safety checks if accesses are protected ...`。
+     → 无状态服务一律用 **`struct`**（不要 `final class` + 持 stored let），`FileManager`/依赖内联 `FileManager.default`，不挂 stored property。
+  2. **`URLSessionDownloadDelegate` 在 iOS 26.5 SDK 里 `didFinishDownloadingTo` 是 required**：
+     note 原话 `protocol requires function 'urlSession(_:downloadTask:didFinishDownloadingTo:)' with type
+     '(URLSession, URLSessionDownloadTask, URL) -> Void'`。按 async `download(for:delegate:)` 的用法只需实现它（空实现即可，
+     async 返回后再由调用方 `moveItem`），否则 `does not conform`。
+  3. **`NSObject` 子类 = `@unchecked Sendable` → stored 闭包必须 `@Sendable`**：
+     报 `warning: stored property 'onProgress' of 'Sendable'-conforming class 'ProgressDownloadDelegate' has non-Sendable type '(Double) -> ()'`，
+     note：`a function type must be marked '@Sendable' to conform to 'Sendable'`。
+     → 跨线程进度回调签名统一 **`@Sendable (Double) async -> Void`**（对齐 `InstallChannel.install(onProgress:)` 约定）；
      UI 侧闭包用 `@MainActor` 参数直接更新 `@State`，别内层再套 `Task`。
 - **涉及文件**：`UpdateIPADownloader.swift`（本次正例）、`InstallChannel` / `SigningCoordinator.onInstallProgress`（既有约定）。
+
+### 7. 编译错误会被「前序 module 错误」掩盖，别凭上一轮报错数判断已修完
+- Swift 是**模块级**编译。若某文件在 `-emit-module` 阶段报错（尤其是并发/Sendable、跨文件类型推断这类
+  会中止 module 生成的错误），后续文件的类型检查可能压根没跑，那些错误就不会出现在日志里。
+- **表现**：修好 A 文件的 2 个错误后复跑，冒出 B 文件 1 个全新错误（本例 `UpdateIPADownloader` →
+  `SealCommunityView` 缺 `title`），看起来像「越修越多」，实则是上一轮被掩盖、本轮才浮出。
+- **规矩**：修完一轮编译错误后，**必须再完整编译到底**，直到日志 `** BUILD SUCCEEDED **` 或
+  `error:` 行为 0，才能下「修完了」的结论；不要用「上一轮只有 N 个错」来推断本轮已解决全部。
 
 ---
 
 ## 二、历史记录
 
+### 2026-09-10 · 二次编译暴露 SealCommunityView 漏传 title（错误被前序 module 错误掩盖）
+
+- **现象**：修复 `UpdateIPADownloader` 两处并发错误后，复跑云编译 **run #34459031904** 仍失败
+  （`Build fast unsigned IPA`，exit 65），但错误只剩 1 行、且换成了别处：
+  `SealCommunityView.swift:104:49: error: missing argument for parameter 'title' in call`。
+- **根因**：
+  1. 直接根因：`SealCommunityView.qqCard` 调用 `communityCard(icon:subtitle:value:action:)`
+     漏传 **required 参数 `title`**（`communityCard` 第 236 行 `title: String` 无默认值）。
+     这是此前「QQ 群按钮不写群号」改动时误删了 `title:`，属遗留 bug。
+  2. **为何上一轮 run #42 没报**：Swift 是模块级编译，run #42 在 `-emit-module` 阶段被
+     `UpdateIPADownloader` 的 2 个并发错误中止，`SealCommunityView` 的类型检查未完成，
+     此错被**掩盖**。修好前者、重新完整编译后它才浮出。
+- **修复**：`qqCard` 补 `title: "加入 QQ 群"`（与 `telegramCard` 的「加入 Telegram 频道」对称，
+  群号仍不展示）。
+- **涉及文件**：`Seal/Features/Settings/SealCommunityView.swift`。
+- **验证状态**：待云编译（run #34459031904 之后的下一次）+ 真机社群页 QQ 卡显示。
+- **教训（沉淀为常犯坑位 7）**：**「编译只剩这几个错误」不成立**——module emit 阶段的前序错误
+  会中止后续文件的类型检查，修复后必须重新完整编译才能看全剩余错误，别凭上一轮报错数判断已修完。
+
 ### 2026-09-10 · 应用内更新首次云编译失败（Swift 6 并发红线）→ 已修复
 
-- **现象**：应用内更新方案（下载 → 导入 → 覆盖安装 Seal）首次提交云编译 run #42 报
-  `BUILD_FAILED: failure`，两个编译错误均落在新增的 `UpdateIPADownloader.swift`：
-  1. `static property 'shared' is not concurrency-safe because non-'Sendable' type
-     'UpdateIPADownloader' may have shared mutable state`。
-  2. `type 'ProgressDownloadDelegate' does not conform to protocol 'URLSessionDownloadDelegate'`。
-- **根因**：项目是 `-swift-version 6` 严格并发：
+- **现象**：应用内更新方案（下载 → 导入 → 覆盖安装 Seal）首次提交云编译 **run #34456273529**
+  报 `BUILD_FAILED: failure`。全量日志里真实 `error:` 行**仅 2 行**，均落在新增的
+  `UpdateIPADownloader.swift`：
+  1. `:6:16 error: static property 'shared' is not concurrency-safe because non-'Sendable'
+     type 'UpdateIPADownloader' may have shared mutable state`
+     （note：`class 'UpdateIPADownloader' does not conform to the 'Sendable' protocol`
+     + 建议 `add '@MainActor'` / `disable concurrency-safety checks`）。
+  2. `:90:21 error: type 'ProgressDownloadDelegate' does not conform to protocol
+     'URLSessionDownloadDelegate'`
+     （note：`protocol requires function 'urlSession(_:downloadTask:didFinishDownloadingTo:)'`）。
+- **根因**（编译器命令行确凿 `-swift-version 6`，Xcode 26.5 强制 Swift 6 语言模式）：
   ① 下载器写成 `final class` 且持有 `let fileManager`（非 Sendable），却暴露 `static shared`；
-  ② delegate 缺 required `didFinishDownloadingTo`，且 `onProgress` 是非 `@Sendable` 闭包。
+  ② iOS 26.5 SDK 里 `didFinishDownloadingTo` 是 required，delegate 未实现；
+  ③ `ProgressDownloadDelegate` 继承 `NSObject`（`@unchecked Sendable`），stored 闭包
+     `onProgress` 是非 `@Sendable`，触发 `warning: ... has non-Sendable type '(Double) -> ()'`。
 - **修复**：
   - `UpdateIPADownloader` 由 `final class` 改为 **`struct`**（去实例可变状态），`fileManager`
     改为内联 `FileManager.default`；`shared` 因此并发安全。
@@ -88,7 +131,7 @@
     `@Sendable (Double) async -> Void`，对齐项目既有 `InstallChannel` 进度约定；
     调用侧 `UpdateNoticeView.handleUpdate` 用 `@MainActor` 参数直接更新 `phase`。
 - **涉及文件**：`UpdateIPADownloader.swift`、`UpdateNoticeView.swift`。
-- **验证状态**：待云编译（run 复跑）+ 真机下载进度 / 自动弹签名抽屉验证。
+- **验证状态**：待云编译（run #34459031904 复跑）+ 真机下载进度 / 自动弹签名抽屉验证。
   教训已沉淀为「常犯坑位 6」。详见 `SEAL_INAPP_UPDATE_PLAN_20260910.md` §7。
 
 ### 2026-09-10 · 定位「今天签 Seal、明天掉签」根因

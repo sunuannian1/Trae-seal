@@ -102,6 +102,7 @@ struct SealCommunityView: View {
     private var qqCard: some View {
         communityCard(
             icon: "bubble.left.and.bubble.right",
+            title: "加入 QQ 群",
             subtitle: "点击直接跳转 QQ 加群",
             value: nil,
             action: joinQQGroup
