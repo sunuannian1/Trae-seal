@@ -18,7 +18,7 @@ packages:
     revision: 87f61ceb1161d90f3c6b2e35bad7ebab15367a90
   AnisetteKit:
     url: https://github.com/sunuannian1/AnisetteKit
-    revision: 1f5a7e36553cc865b873f222b87a6486c0bcc7bf
+    revision: 081200ec0cfcecc1fd7ef0dd8c5ddc62bd040c88
   Crypto:
     url: https://github.com/apple/swift-crypto
     exactVersion: 4.5.2
