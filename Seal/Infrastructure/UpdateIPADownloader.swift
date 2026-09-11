@@ -49,11 +49,13 @@ struct UpdateIPADownloader {
         let task = session.downloadTask(with: request)
         let (temporaryURL, response): (URL, URLResponse)
         do {
-            (temporaryURL, response) = try await withTaskCancellationHandler {
+            let result = try await withTaskCancellationHandler(operation: {
+                () async throws -> (URL, URLResponse) in
                 try await task.value
-            } onCancel: {
+            }, onCancel: {
                 task.cancel()
-            }
+            })
+            (temporaryURL, response) = result
         } catch is CancellationError {
             try? fileManager.removeItem(at: destination)
             throw CancellationError()
