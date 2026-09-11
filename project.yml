@@ -14,10 +14,10 @@ packages:
     url: https://github.com/weichsel/ZIPFoundation
     exactVersion: 0.9.20
   AltSign:
-    url: https://github.com/dmjorb/AltSign
-    revision: 868f0ff
+    url: https://github.com/sunuannian1/AltSign
+    revision: 87f61ce
   AnisetteKit:
-    url: https://github.com/dmjorb/AnisetteKit
+    url: https://github.com/sunuannian1/AnisetteKit
     revision: 081200e
   Crypto:
     url: https://github.com/apple/swift-crypto

@@ -11,7 +11,7 @@
 |---|---|---|---|
 | 安装（RSD shim 通道） | MissingPackagePath | **隧道会话绑定**：RSD shim 服务的 afcd 暂存视图绑定在建立它的 RemotePairing 隧道会话上；此前"首选 CoreDevice 隧道上传/安装"每次 FFI 调用都新建隧道，会话 A 上传的包在会话 B 的 installd 眼中不存在 | ✅ 已修复（见下） |
 | 安装（CoreDeviceProxy） | ConnectionReset | devicecompute 服务在 WiFi/RSD 通道上硬重置连接（独占连接+重试均无效） | ✅ 整个 fresh-tunnel 模块已删除 |
-| Apple ID / 续签 | 503 | 国内直连 gsa.apple.com 线路时通时断 + 反复重置触发的设备级临时标记 | 环境问题；3s/8s 自动重试已内置，持续 503 需梯子或等冷却 |
+| Apple ID / 续签 | 503 | 国内直连 gsa.apple.com 线路时通时断 + **复用上次失败的 idle 连接被 Apple 拒**（代理/TUN 切换后残留连接未关闭就被后续请求复用）。上游 iloader 2.3.3 同根因修复（isideload reqwest `.pool_max_idle_per_host(0)`） | ✅ 已加修复：altsign-mod `ALTAppleAPI.swift` 认证 session 设 `Connection: close`（登录/2FA GSA 请求每次走新连接）；叠加既有 3s/8s 自动重试。待随 AltSign fork 发版 + 真机回归 |
 
 ## 安装链路修复（2026-09-08 落地，OTA 同日下线）
 

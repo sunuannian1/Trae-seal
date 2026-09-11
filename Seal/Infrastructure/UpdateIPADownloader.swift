@@ -110,8 +110,13 @@ private final class ProgressDownloadDelegate: NSObject, URLSessionDownloadDelega
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+        // totalBytesExpectedToWrite 在无 Content-Length（GitHub 302 重定向后的响应、
+        // chunked transfer）时为 NSURLSessionTransferSizeUnknown(-1)，不能作为进度分母。
+        // 优先用任务自身的接收字节数锚点；未知长度时按已收到字节推进（避免进度死 0%）。
+        var expected = downloadTask.countOfBytesExpectedToReceive
+        if expected <= 0 { expected = totalBytesExpectedToWrite }
+        guard expected > 0 else { return }
+        let fraction = Double(totalBytesWritten) / Double(expected)
         Task { await onProgress(min(max(fraction, 0), 1)) }
     }
 

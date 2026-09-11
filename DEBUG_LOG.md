@@ -76,7 +76,26 @@
      UI 侧闭包用 `@MainActor` 参数直接更新 `@State`，别内层再套 `Task`。
 - **涉及文件**：`UpdateIPADownloader.swift`（本次正例）、`InstallChannel` / `SigningCoordinator.onInstallProgress`（既有约定）。
 
-### 7. 编译错误会被「前序 module 错误」掩盖，别凭上一轮报错数判断已修完
+### 7. gsa.apple.com 对「复用上次失败的 idle 连接」返回 503，关键认证须关闭连接复用
+- **现象**：Apple 认证（登录/2FA/团队查询）偶发 `HTTP 503 Service Temporarily Unavailable`，
+  同一账号重试有时能过、有时一直卡 503；在代理/TUN 切换后更明显。
+- **根因**：`gsa.apple.com` 对复用上一个倒下的连接敏感。一次失败请求残留的 idle 连接若被下一个
+  请求复用，Apple 直接回 503；而失败后立刻重试往往又复用了同一失效连接 → 越重试越 503。
+  这是**连接复用**问题，不是认证凭据/anisette 问题（因此 `retryOnApple503` 纯靠隔几秒重发
+  效果不稳定，且 `SEAL-AUTH-107t` 超时/`SEAL-AUTH-107a` 文案会误导排查方向）。
+- **上游佐证**：iloader 2026-09-10 用同样根因修复 503 ——
+  `isideload/src/auth/grandslam.rs` 构造 reqwest client 加 `.pool_max_idle_per_host(0)`
+  （禁用每 host idle 复用），iloader 因此发版 **2.3.3**（升级 isideload `#f2fd29ab`→`#f6a4d5d`）。
+- **规矩**：GSA 认证请求走 New 连接，不复用 idle 连接。Swift/URLSession 下没有 reqwest 的一行 API，
+  等价做法是给认证 session 设 `URLSessionConfiguration.httpAdditionalHeaders = ["Connection": "close"]`
+  （或逐请求加 `Connection: close`）。注意这是**认证 session 专属**，不要全局扩散到所有请求。
+- **涉及文件**：`Forks①` `altsign-mod/Sources/ALTAppleAPI.swift:71`（session 加 `Connection: close`，
+  一条覆盖登录 init/complete + 2FA trusteddevice/phone/validate 全部 GSA 请求）。
+- **注意（落地前置）**：Seal 通过 SwiftPM 用 `github.com/dmjorb/AltSign@868f0ff`，本地
+  `.dev-workspace/forks/altsign-mod` 与该 remote 同源（HEAD=868f0ff），改动须随该仓库发版
+  并更新 `project.yml` revision 才会进真机。尚未真机回归。
+
+### 8. 编译错误会被「前序 module 错误」掩盖，别凭上一轮报错数判断已修完
 - Swift 是**模块级**编译。若某文件在 `-emit-module` 阶段报错（尤其是并发/Sendable、跨文件类型推断这类
   会中止 module 生成的错误），后续文件的类型检查可能压根没跑，那些错误就不会出现在日志里。
 - **表现**：修好 A 文件的 2 个错误后复跑，冒出 B 文件 1 个全新错误（本例 `UpdateIPADownloader` →
@@ -87,6 +106,38 @@
 ---
 
 ## 二、历史记录
+
+### 2026-09-11 · Seal 更新下载进度卡 0%（totalBytesExpectedToWrite 为 -1 时被静默丢弃）
+- **现象**：真机点「下载更新」，进度一直停在 0%，下载实际在走但 UI 不刷新。
+- **根因**：`ProgressDownloadDelegate.didWriteData` 里 `guard totalBytesExpectedToWrite > 0 else { return }`。
+  `totalBytesExpectedToWrite` 在响应无 `Content-Length`（GitHub 的 `browser_download_url` 302 重定向到
+  `objects.githubusercontent.com`、chunked transfer）时为 `NSURLSessionTransferSizeUnknown`(-1)，guard 直接把回调
+  丢掉 → 进度永远 0 也不报错。
+- **修复**：改用任务的 `downloadTask.countOfBytesExpectedToReceive` 作首选锚点（重定向后跟随到真实长度，
+  通常 >0 且准确），仅当它也不可用时才回退 `totalBytesExpectedToWrite`，避免依赖「首个响应的 -1」。
+- **涉及文件**：`Seal/Infrastructure/UpdateIPADownloader.swift`（`didWriteData`）。
+- **验证状态**：代码已改，主仓库 worktree 有改动，**未云编译、未真机回归**。
+- **注意**：本项与「下载走代理/连接复用」是不同的两个问题；若下载源本身连不通（`SEAL-UPDATE-DL-503`），
+  进度 0% 是表象、根因在网络，勿纠缠进度回调。
+
+### 2026-09-11 · gsa.apple.com 503：关闭认证 session 的连接复用（对齐 iloader 2.3.3）
+- **现象**：真机 Seal 添加 Apple ID 报 `503 Service Temporarily Unavailable`，
+  重试时好时坏；iloader（Windows，同一 Apple 服务）今日开发者修好同类 503 并发版 2.3.3。
+- **根因**：`gsa.apple.com` 对「复用上次失败的 idle 连接」敏感，代理/TUN 切换后残留连接被下一请求复用
+  会被 Apple 拒 503；纯靠隔几秒重发不稳定，还会复用一个失效连接。
+- **上游佐证（已核实）**：iloader 2026-09-10 提交 `348eefd` 升级 `isideload` `#f2fd29ab`→`#f6a4d5d` 并发 2.3.3；
+  isideload commit `f6a4d5d` 标题 **"Disable pooling on reqwest client"**，在 `grandslam.rs` 构造 reqwest client 加
+  `.pool_max_idle_per_host(0)`（禁用每 host idle 复用）。
+- **修复**：altsign-mod `ALTAppleAPI.swift` 认证 `URLSessionConfiguration.ephemeral` 加
+  `configuration.httpAdditionalHeaders = ["Connection": "close"]`（一条覆盖登录 init/complete +
+  2FA trusteddevice/phone/validate 全部 GSA 请求），叠加既有 `retryOnApple503`(3s/8s)。
+- **涉及文件**：`.dev-workspace/forks/altsign-mod/Sources/ALTAppleAPI.swift:71`（独立 git repo dmjorb/AltSign，HEAD=868f0ff）。
+- **落地前置**：Seal 经 SwiftPM 依赖 `github.com/dmjorb/AltSign@868f0ff`，此改动须 commit+push
+  更新 revision 才进真机。
+- **2026-09-11 已落地**：AltSign fork 已迁至 `github.com/sunuannian1/AltSign`（保留上游
+  SideStore/AltSign），修复 commit `87f61ce` 已推送；`project.yml` 的 AltSign url 改 `sunuannian1`、
+  revision 锁 `87f61ce`，AnisetteKit 同步迁至 `sunuannian1/AnisetteKit`（revision 保持 `081200e`）。
+  云编译将自动拉取含修复的依赖。**待真机回归**。
 
 ### 2026-09-10 · 二次编译暴露 SealCommunityView 漏传 title（错误被前序 module 错误掩盖）
 
