@@ -24,11 +24,6 @@ struct AppDetailView: View {
                                 Task { await viewModel.beginRenewalDirectly(for: app) }
                             }
                             .sealPrimaryAction(cornerRadius: 14)
-                            
-                            Button("启用 JIT") {
-                                Task { await viewModel.enableJIT(for: app) }
-                            }
-                            .sealOutlineAction(cornerRadius: 14)
                         }
                     } else {
                         Button("关闭") { dismiss() }

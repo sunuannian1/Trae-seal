@@ -235,10 +235,23 @@ struct SigningProgressView: View {
                 .sealPrimaryAction(cornerRadius: 14)
 
         case .failed(let failure):
-            Button(primaryRecoveryTitle(failure)) {
-                performPrimaryRecovery(failure)
+            if failure.code == "SEAL-APPID-DEVICELIMIT" {
+                VStack(spacing: 10) {
+                    Button("已用 Lara 绕过，继续安装") {
+                        viewModel.continueBypassingDeviceLimit()
+                    }
+                    .sealPrimaryAction(cornerRadius: 14)
+                    Button(primaryRecoveryTitle(failure)) {
+                        performPrimaryRecovery(failure)
+                    }
+                    .sealOutlineAction(cornerRadius: 14)
+                }
+            } else {
+                Button(primaryRecoveryTitle(failure)) {
+                    performPrimaryRecovery(failure)
+                }
+                .sealPrimaryAction(cornerRadius: 14)
             }
-            .sealPrimaryAction(cornerRadius: 14)
         case nil:
             EmptyView()
         }
@@ -378,6 +391,7 @@ struct SigningProgressView: View {
     }
 
     private func primaryRecoveryTitle(_ failure: ImportFailure) -> String {
+        if isNonRetryableFailure(failure) { return "知道了" }
         if failure.code.hasPrefix("SEAL-NET-") { return "重试" }
         if isInstallChannelFailure(failure) { return "重新安装" }
         if isTeamFailure(failure) { return "选择 Team" }

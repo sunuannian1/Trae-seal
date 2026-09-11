@@ -35,6 +35,7 @@ actor SigningCoordinator {
         allowDroppingExtensions: Bool = true,
         installAfterSigning: Bool = true,
         forceResign: Bool = false,
+        bypassFreeAccountDeviceLimit: Bool = false,
         progress: @Sendable (SigningStage) async -> Void,
         // 证书序列号一旦确定（复用缓存或新申请）即回传，供 UI 显示真实证书，
         // 避免只持有“签名开始时快照”而在失败回看时误显示“证书未准备”。
@@ -106,7 +107,11 @@ actor SigningCoordinator {
             try Task.checkCancellation()
             // 免费账号每台设备最多同时 3 个自签应用（含 Seal 自身）；installd 超限只报模糊
             // 错误并长时间转圈，这里按本机记录提前拦截给出明确指引。
-            try await enforceFreeAccountInstallLimit(app: app, account: account)
+            try await enforceFreeAccountInstallLimit(
+                app: app,
+                account: account,
+                bypassFreeAccountDeviceLimit: bypassFreeAccountDeviceLimit
+            )
             // 导入与已安装 IPA 相同（签名后 Bundle ID 一致）时，提前拦截，避免生成
             // 拥有相同 Bundle ID 的重复记录与重复文件夹。
             try await enforceBundleIdentifierUniqueness(
@@ -861,12 +866,15 @@ actor SigningCoordinator {
 
     /// 免费 Apple ID 每台设备最多同时安装 3 个自签应用（含 Seal 自身）。
     /// 超限时 installd 只返回模糊错误且伴随长时间重传转圈，这里按本机已安装记录提前拦截。
-    /// 按「签名团队」（同一免费 Apple ID 的 teamID）维度计数，不同免费 Apple ID 槽位独立。
+    /// 上限是设备级（跨不同 Apple ID / team 累计，非每账号 3 个），计数逻辑见下方。
     private func enforceFreeAccountInstallLimit(
         app: AppRecord,
-        account: AppleAccountRecord
+        account: AppleAccountRecord,
+        bypassFreeAccountDeviceLimit: Bool = false
     ) async throws {
         guard account.isFreeTeam == true else { return }
+        // 用户已在 Lara 完成 3-App Bypass 时跳过本机预检，交回 installd 最终裁决。
+        guard bypassFreeAccountDeviceLimit == false else { return }
         // Apple 的「free developer profile」上限是设备级：一台设备上所有用免费 Apple ID
         // 签名的应用加总最多 3 个（跨不同 Apple ID / team 累计，不是每个账号 3 个）。
         // 此前按 signingTeamID/accountID 过滤只数到当前账号，会漏掉用其它免费账号签的

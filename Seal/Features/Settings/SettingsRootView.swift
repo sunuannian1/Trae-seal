@@ -134,8 +134,9 @@ struct SettingsRootView: View {
                             )
                         }
                         .buttonStyle(.plain)
-                        sectionDivider
+                    }
 
+                    settingsSection("社群") {
                         NavigationLink { SealCommunityView() } label: {
                             settingsRow(
                                 title: "加入 Seal 社群",

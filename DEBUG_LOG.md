@@ -107,6 +107,31 @@
 
 ## 二、历史记录
 
+### 2026-09-12 · 免费账号 3 应用上限：按钮文案/行为失配修复 + 支持 Lara 3-App Bypass 跳过预检
+- **现象一（按钮文案与行为不一致）**：免费账号装第 4 个自签应用触发 `SEAL-APPID-DEVICELIMIT` 时，
+  失败态主按钮显示「重试」，但 `performPrimaryRecovery` 里 `isNonRetryableFailure` 优先命中直接
+  `dismiss`，点了并不会真重试；`SEAL-INSTALL-702l/702s` 同理显示「重新安装」但实际也是 dismiss。
+- **根因一**：`primaryRecoveryTitle` 判断顺序里 `isNonRetryableFailure`（DEVICELIMIT/702l/702s）未提前，
+  被 `isInstallChannelFailure`→「重新安装」、`isAppIDFailure`→「重试」先命中；而 `performPrimaryRecovery`
+  第一分支就是 `isNonRetryableFailure → dismiss`，两处顺序不一致。
+- **修复一**：`primaryRecoveryTitle` 顶部提前 `if isNonRetryableFailure(failure) { return "知道了" }`，
+  三个确定性失败统一「知道了」并关闭（落实既有约束）。
+- **现象二（无法配合 Lara 绕过）**：Lara 3-App Bypass 在设备本地移除免费 profile 3 应用上限检查
+  （DarkSword 内核 exploit；仅 iOS 17.0–18.7.1 / 26.0.x，M5/A19 不支持，且不增加 10-App ID 服务器上限），
+  但 Seal 的 `enforceFreeAccountInstallLimit` 是签名前客户端硬预检，≥3 直接抛 DEVICELIMIT、到不了
+  installd，导致 Lara 绕过对 Seal 用户无效。
+- **修复二**：引入 `bypassFreeAccountDeviceLimit: Bool = false` 默认参数，链路
+  `SigningProgressView`（DEVICELIMIT 失败态双按钮：主「已用 Lara 绕过，继续安装」+ 次「知道了」）
+  → `AppsViewModel.continueBypassingDeviceLimit()` → `restartSigning`/`runSigning` →
+  `SigningCoordinator.signAndInstall` → `enforceFreeAccountInstallLimit`（`guard bypass... == false else return`）
+  跳过预检，交回 installd 最终裁决：未真正绕过时 installd 仍回 `ApplicationVerificationFailed`
+  （落到既有 `SEAL-INSTALL-702l` 分支）。默认参数隔离，付费账号 / 免费账号 <3 / 续签
+  （`RenewalCoordinator` 不传 → false）/ 重试 / Bundle ID 检查等原链路零影响。
+- **涉及文件**：`SigningCoordinator.swift`、`AppsViewModel.swift`、`SigningProgressView.swift`。
+- **验证状态**：代码已改，**未云编译、未真机回归**。真机验证点：① 付费账号、免费账号第 3 个照常签名；
+  ② 超限失败态为「已用 Lara 绕过，继续安装」+「知道了」；③ 已 bypass 点主按钮可装第 4 个，未 bypass
+  点主按钮落到 iOS 拒绝（702l）。
+
 ### 2026-09-11 · 添加 Apple ID 报 503 Service Temporarily Unavailable（客户端标识被 Apple 封禁）
 - **现象**：9 月 10 日全天 iloader 所有用户（含 Seal）添加 Apple ID 均失败，报
   `HTTP 503 Service Temporarily Unavailable`，来自 `https://gsa.apple.com/grandslam/GsService2`。
