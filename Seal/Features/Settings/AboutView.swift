@@ -6,6 +6,13 @@ struct AboutView: View {
     private let build = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "1"
     private let bundleID = Bundle.main.bundleIdentifier ?? "com.mjorb.seal"
 
+    /// 应用内更新安装回调（下载完成后触发）；为 nil 时回退跳转浏览器。
+    private let onInstall: ((URL) -> Void)?
+
+    init(onInstall: ((URL) -> Void)? = nil) {
+        self.onInstall = onInstall
+    }
+
     @State private var isCheckingUpdate = false
     @State private var updateNotice: UpdateNotice?
     @State private var showNoUpdateAlert = false
@@ -30,7 +37,7 @@ struct AboutView: View {
                             updateNotice = nil
                         }
                     },
-                    onInstall: nil
+                    onInstall: installCallback
                 )
             }
         }
@@ -160,6 +167,17 @@ struct AboutView: View {
                 showNoUpdateAlert = true
             }
             isCheckingUpdate = false
+        }
+    }
+
+    /// 下载完成后先收起弹窗，再交给上层执行导入安装。
+    private var installCallback: ((URL) -> Void)? {
+        guard let onInstall else { return nil }
+        return { localURL in
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                updateNotice = nil
+            }
+            onInstall(localURL)
         }
     }
 

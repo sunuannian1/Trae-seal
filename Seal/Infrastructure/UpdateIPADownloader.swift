@@ -34,10 +34,14 @@ struct UpdateIPADownloader {
             .appending(path: "seal-update-\(UUID().uuidString).ipa")
 
         let delegate = ProgressDownloadDelegate(onProgress: onProgress, destination: destination)
+        // 中国大陆网络下 GitHub 资产域可能长时间无响应，默认 60s 空闲超时过久会让
+        // 下载卡在 0% 不报错；此处收紧到 30s，失败快速抛出 transport 错误并显示「重试」。
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 30
         let (temporaryURL, response): (URL, URLResponse)
         do {
             (temporaryURL, response) = try await URLSession.shared.download(
-                for: URLRequest(url: url),
+                for: request,
                 delegate: delegate
             )
         } catch {

@@ -616,6 +616,10 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         request.setValue(clientInfo.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("text/x-xml-plist", forHTTPHeaderField: "Content-Type")
         request.setValue("*/*", forHTTPHeaderField: "Accept")
+        // 对齐 AltSign 与 iloader(2.3.3)：gsa.apple.com 对复用上次失败留下的 idle
+        // 连接敏感（代理/TUN 切换后残留连接再复用会被 Apple 回 503），关键 provisioning
+        // 请求每次走新连接。
+        request.setValue("close", forHTTPHeaderField: "Connection")
         request.setValue(identity.localUserID, forHTTPHeaderField: "X-Apple-I-MD-LU")
         request.setValue(identity.deviceIdentifier, forHTTPHeaderField: "X-Mme-Device-Id")
         request.setValue(Self.currentDateString(), forHTTPHeaderField: "X-Apple-I-Client-Time")

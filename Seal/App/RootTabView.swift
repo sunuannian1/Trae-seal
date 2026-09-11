@@ -28,7 +28,10 @@ struct RootTabView: View {
             SettingsRootView(
                 viewModel: settingsViewModel,
                 relatedApps: appsViewModel.apps,
-                certificateExportHandler: certificateExportHandler
+                certificateExportHandler: certificateExportHandler,
+                onSelfUpdateInstall: { localURL in
+                    installSelfUpdate(localURL)
+                }
             )
             .tabItem {
                 Label(AppSection.settings.title, systemImage: AppSection.settings.systemImage)
@@ -97,14 +100,18 @@ struct RootTabView: View {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                             updateNotice = nil
                         }
-                        selection = .apps
-                        Task {
-                            await appsViewModel.importSelfUpdateFile(localURL)
-                            UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
-                        }
+                        installSelfUpdate(localURL)
                     }
                 )
             }
+        }
+    }
+
+    private func installSelfUpdate(_ localURL: URL) {
+        selection = .apps
+        Task {
+            await appsViewModel.importSelfUpdateFile(localURL)
+            UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
         }
     }
 

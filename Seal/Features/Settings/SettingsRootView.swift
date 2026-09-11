@@ -5,6 +5,7 @@ struct SettingsRootView: View {
     @ObservedObject var viewModel: SettingsViewModel
     let relatedApps: [AppRecord]
     let certificateExportHandler: CertificateExportHandler
+    let onSelfUpdateInstall: ((URL) -> Void)?
 
     @State private var navigationPath = NavigationPath()
     @State private var isAddingAccount = false
@@ -124,7 +125,7 @@ struct SettingsRootView: View {
                         .buttonStyle(.plain)
                         sectionDivider
 
-                        NavigationLink { AboutView() } label: {
+                        NavigationLink { AboutView(onInstall: onSelfUpdateInstall) } label: {
                             settingsRow(
                                 title: "关于 Seal",
                                 value: "版本 \(appVersion)",

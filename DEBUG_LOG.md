@@ -107,6 +107,23 @@
 
 ## 二、历史记录
 
+### 2026-09-11 · About「检查更新」弹窗跳浏览器而非应用内安装 + gsa provisioning 路径补 Connection: close
+- **现象一**：关于 Seal →「检查更新」→ 弹窗点「下载更新」，跳到 GitHub Release 网页，而非 Seal 内部下载+签名安装。
+- **根因一**：`AboutView` 把 `UpdateNoticeView(onInstall:)` 传了 `nil`；`handleUpdate` 里 `guard let ipaURL, let onInstall`
+  命中缺省分支走 `openURL(html_url)`。启动弹窗（RootTabView）有 onInstall（应用内），About 弹窗没有 → 两条入口行为不一致。
+- **修复一**：RootTabView 抽出 `installSelfUpdate(_:)`（切 Apps tab + `importSelfUpdateFile` + 清理），
+  经 `SettingsRootView.onSelfUpdateInstall` 下传到 `AboutView(onInstall:)`；About 弹窗下载完成后先收弹窗再导入安装，与启动弹窗一致。
+- **涉及文件**：`Seal/App/RootTabView.swift`、`Seal/Features/Settings/SettingsRootView.swift`、`Seal/Features/Settings/AboutView.swift`。
+- **现象二**：`AnisetteClient.appleRequest`（本地/远程 provisioning 打 `gsa.apple.com/grandslam/GsService2/lookup`
+  及 midStart/midFinish）用默认 `.shared` session、未禁连接复用，与 AltSign 认证层（`Connection: close`）不一致，仍可能被 Apple 回 503。
+- **修复二**：`appleRequest` 加 `Connection: close` 请求头，对齐 AltSign 认证 session 与 iloader `.pool_max_idle_per_host(0)`。
+- **涉及文件**：`Seal/Infrastructure/Accounts/AnisetteClient.swift`（`appleRequest`）。
+- **附加**：`UpdateIPADownloader.download` 加 `request.timeoutInterval = 30`，GitHub 资产域无响应时快速抛
+  `transport` 错误显示「重试」，避免卡 0% 不报错。
+- **验证状态**：代码已改，**未云编译、未真机回归**。
+- **注意**：`Connection: close` 只能解决「连接复用」类 503；若仍有 503，多为 Apple 按 IP 限流（同 IP 请求过多被暂封），
+  需换网络/热点或等 `Retry-After`，非客户端能根治。
+
 ### 2026-09-11 · Seal 更新下载进度卡 0%（totalBytesExpectedToWrite 为 -1 时被静默丢弃）
 - **现象**：真机点「下载更新」，进度一直停在 0%，下载实际在走但 UI 不刷新。
 - **根因**：`ProgressDownloadDelegate.didWriteData` 里 `guard totalBytesExpectedToWrite > 0 else { return }`。
