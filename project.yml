@@ -15,10 +15,10 @@ packages:
     exactVersion: 0.9.20
   AltSign:
     url: https://github.com/sunuannian1/AltSign
-    revision: 87f61ce
+    revision: 87f61ceb1161d90f3c6b2e35bad7ebab15367a90
   AnisetteKit:
     url: https://github.com/sunuannian1/AnisetteKit
-    revision: 081200e
+    revision: 1f5a7e36553cc865b873f222b87a6486c0bcc7bf
   Crypto:
     url: https://github.com/apple/swift-crypto
     exactVersion: 4.5.2
