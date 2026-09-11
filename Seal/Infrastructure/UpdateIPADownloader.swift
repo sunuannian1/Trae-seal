@@ -22,7 +22,9 @@ struct UpdateIPADownloader {
     /// - Parameter onProgress: 回调（已接收字节数, 总字节数可空）。总大小未知（无 Content-Length）时
     ///   `total` 为 nil，由 UI 改为展示「已下载 X」字节数，不再返回假百分比。
     /// - 超时策略：中国大陆网络下 GitHub 资产域可能长时间无响应，仅靠系统默认空闲超时会让
-    ///   下载卡在 0% 不报错；此处收紧请求空闲超时到 15s、总时长硬上限 90s，并支持外部取消。
+    ///   下载卡在 0% 不报错；此处收紧请求空闲超时到 15s、总时长硬上限 90s。
+    /// - 取消：使用 `URLSession.download(for:)` 原生异步 API，Task 取消会自动传导到传输任务，
+    ///   无需手动 `withTaskCancellationHandler`（避免旧式 `task.value` 在本 SDK 下的类型歧义）。
     func download(
         from url: URL,
         onProgress: @escaping @Sendable (Int64, Int64?) async -> Void
@@ -37,7 +39,7 @@ struct UpdateIPADownloader {
         let destination = downloadsDirectory
             .appending(path: "seal-update-\(UUID().uuidString).ipa")
 
-        let delegate = ProgressDownloadDelegate(onProgress: onProgress, destination: destination)
+        let delegate = ProgressDownloadDelegate(onProgress: onProgress)
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         let configuration = URLSessionConfiguration.default
@@ -46,15 +48,9 @@ struct UpdateIPADownloader {
         let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
 
-        let task = session.downloadTask(with: request)
         let (temporaryURL, response): (URL, URLResponse)
         do {
-            let result = try await withTaskCancellationHandler {
-                try await task.value
-            } onCancel: {
-                task.cancel()
-            }
-            (temporaryURL, response) = result
+            (temporaryURL, response) = try await session.download(for: request)
         } catch is CancellationError {
             try? fileManager.removeItem(at: destination)
             throw CancellationError()
@@ -74,15 +70,11 @@ struct UpdateIPADownloader {
             throw UpdateDownloadError.badHTTPStatus
         }
 
-        // Apple 语义：didFinishDownloadingTo 的 location 仅在回调内有效，已在回调内移到 destination。
-        // 若实现未生效（destination 不存在），用 async 返回的 temporaryURL 兜底再移一次。
-        if !fileManager.fileExists(atPath: destination.path) {
-            do {
-                try fileManager.moveItem(at: temporaryURL, to: destination)
-            } catch {
-                try? fileManager.removeItem(at: temporaryURL)
-                throw UpdateDownloadError.saveFailed
-            }
+        do {
+            try fileManager.moveItem(at: temporaryURL, to: destination)
+        } catch {
+            try? fileManager.removeItem(at: temporaryURL)
+            throw UpdateDownloadError.saveFailed
         }
         return destination
     }
@@ -124,11 +116,9 @@ enum UpdateDownloadError: LocalizedError {
 
 private final class ProgressDownloadDelegate: NSObject, URLSessionDownloadDelegate {
     private let onProgress: @Sendable (Int64, Int64?) async -> Void
-    private let destination: URL
 
-    init(onProgress: @escaping @Sendable (Int64, Int64?) async -> Void, destination: URL) {
+    init(onProgress: @escaping @Sendable (Int64, Int64?) async -> Void) {
         self.onProgress = onProgress
-        self.destination = destination
     }
 
     func urlSession(
@@ -153,7 +143,6 @@ private final class ProgressDownloadDelegate: NSObject, URLSessionDownloadDelega
         downloadTask: URLSessionDownloadTask,
         didFinishDownloadingTo location: URL
     ) {
-        // location 仅在回调内有效，须立即移动到永久位置，否则会被系统删除。
-        try? FileManager.default.moveItem(at: location, to: destination)
+        // async download(for:) 返回后再由调用方 moveItem 到最终位置，这里无需处理。
     }
 }
