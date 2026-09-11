@@ -25,6 +25,8 @@ enum SealTunnelState: Equatable {
 
 @MainActor
 final class SealTunnelManager: ObservableObject {
+    static let shared = SealTunnelManager()
+
     private enum Configuration {
         static let deviceAddress = "10.7.0.0"
         static let reflectedAddress = "10.7.0.1"

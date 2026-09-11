@@ -116,8 +116,17 @@ actor MinimuxerInstallChannel: InstallChannel {
 
             run(.vpnTunnel)
             await waitForNetworkRefresh(rounds: 2, delay: .milliseconds(250))
-            let tunnelReachable = await onDemandActivator.probeTunnel()
-            if tunnelReachable { pass(.vpnTunnel) }
+            var tunnelReachable = await onDemandActivator.probeTunnel()
+            if tunnelReachable {
+                pass(.vpnTunnel)
+            } else {
+                // 首次探测不通：真正拉起 Seal 自带的 SealTunnel 扩展，
+                // 而非继续依赖外部 LocalDevVPN 软件。activate() 会启动
+                // SealTunnelManager，建 10.7.0.0/24 虚拟网卡。
+                await onDemandActivator.activate()
+                tunnelReachable = await onDemandActivator.probeTunnel()
+                if tunnelReachable { pass(.vpnTunnel) }
+            }
 
             if let udid = try await readyDeviceIdentifier() {
                 pass(.vpnTunnel)

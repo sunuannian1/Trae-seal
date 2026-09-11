@@ -13,8 +13,12 @@ struct LocalDevVPNOnDemandActivator: VPNOnDemandActivating {
     )
 
     func activate() async {
+        // 真正拉起 Seal 自带的 SealTunnel 扩展（10.7.0.0/24 反射隧道），
+        // 取代对外部 LocalDevVPN 软件的依赖；probeTunnel 只是探测，这里才是“按需拉起”。
+        await SealTunnelManager.shared.start()
+        // 给 VPN 建立虚拟网卡留出时间后再探测。
+        try? await Task.sleep(for: .milliseconds(1500))
         _ = await probeTunnel()
-        try? await Task.sleep(for: .milliseconds(900))
     }
 
     func probeTunnel() async -> Bool {

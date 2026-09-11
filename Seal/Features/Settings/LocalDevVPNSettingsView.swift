@@ -3,7 +3,7 @@ import UIKit
 
 struct LocalDevVPNSettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
-    @StateObject private var sealTunnel = SealTunnelManager()
+    @StateObject private var sealTunnel = SealTunnelManager.shared
     @State private var isChecking = false
     @State private var isCheckingSealTunnel = false
     @State private var shouldCheckSealTunnelAfterConnect = false

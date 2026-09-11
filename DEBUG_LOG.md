@@ -115,6 +115,33 @@
 
 ## 二、历史记录
 
+### 2026-09-12 · 安装卡「正在连接设备」：内置 SealTunnel 从未激活，被迫依赖外部 LocalDevVPN 软件
+- **现象**：真机不打开外部 LocalDevVPN 软件，签名/续签后的安装环节一直卡在「正在连接设备」，
+  隧道始终连不通；手动打开 LocalDevVPN 软件后才可继续。
+- **根因**：Seal 自带 `SealTunnel` Network Extension（`NEPacketTunnelProvider`，10.7.0.0/24
+  反射隧道，bundle `com.mjorb.seal.TunnelProv`）此前**从未被激活**。`MinimuxerInstallChannel`
+  安装流程只对 `10.7.0.1` 做 TCP `probeTunnel()` 探测，不通就直接放行/卡住，从不「按需拉起」隧道；
+  由此本应等价于外部 LocalDevVPN 软件的扩展形同虚设，实际被外部软件代建隧道。
+- **修复**（三层联动，纯本地 Swift、零新增 Rust）：
+  1. `SealTunnelManager` 加 `static let shared` 单例 —— 让设置页与安装流程共用同一隧道实例状态
+     （`@MainActor` 隔离，满足 Swift 6 并发，非「非 Sendable class 暴露 shared」红线）。
+  2. `LocalDevVPNOnDemandActivator.activate()` 从「仅 probe + sleep」改为**真正调用
+     `SealTunnelManager.shared.start()`** 拉起内置扩展（建 `com.mjorb.seal.TunnelProv` 虚拟网卡），
+     等待由 900ms 延长到 1500ms 再探测。
+  3. `MinimuxerInstallChannel` 安装链路：首次探测隧道不通时自动 `onDemandActivator.activate()`
+     拉起 SealTunnel，再二次探测，通了才 `pass(.vpnTunnel)`。
+  4. `LocalDevVPNSettingsView` 改用 `.shared`；`SettingsRootView` 签名分组新增「本地隧道」入口
+     （`SettingsRoute.localDevVPN`），可手动启动/停止/重检。
+- **涉及文件**：`SealTunnelManager.swift`、`LocalDevVPNOnDemandActivator.swift`、
+  `MinimuxerInstallChannel.swift`、`LocalDevVPNSettingsView.swift`、`SettingsRootView.swift`。
+- **验证状态**：代码已改，**未云编译、未真机回归**。真机验证点：① 不装外部 LocalDevVPN 软件，
+  签名/续签后安装应自动拉起内置隧道并走「正在安装」成功；② 「我的 → 本地隧道」可手动启动/停止，
+  状态与安装流程一致；③ 签名/续签环节（走 Apple 外网服务）全程不受该改动影响。
+- **配置核对（已过）**：`project.yml` 里 SealTunnel `PRODUCT_BUNDLE_IDENTIFIER=com.mjorb.seal.TunnelProv`
+  与 `SealTunnelManager` 的 `.TunnelProv` 后缀精确匹配；主 app 与扩展两份 entitlements 均含
+  `packet-tunnel-provider`；扩展 `NSExtensionPrincipalClass=$(PRODUCT_MODULE_NAME).PacketTunnelProvider`、
+  `embed: true` 确保进 IPA。
+
 ### 2026-09-12 · 更新检测正常但下载到旧版（发布 release 误用残留 IPA）
 - **现象**：v1.0.10 已发布、`releases/latest` 返回 `v1.0.10`、编译 run headSha 与编译产物均正确，
   但用户反馈「点下载更新出来的续签页是 1.0.9 版本」。

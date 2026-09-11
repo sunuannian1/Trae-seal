@@ -29,6 +29,16 @@ struct SettingsRootView: View {
                         }
                         sectionDivider
 
+                        settingsLink(value: SettingsRoute.localDevVPN) {
+                            settingsRow(
+                                title: "本地隧道",
+                                value: nil,
+                                icon: "network",
+                                showsChevron: true
+                            )
+                        }
+                        sectionDivider
+
                         settingsLink(value: SettingsRoute.account) {
                             settingsRow(
                                 title: "Apple ID",
