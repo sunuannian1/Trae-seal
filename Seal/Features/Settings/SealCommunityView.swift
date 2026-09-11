@@ -1,12 +1,34 @@
 import SwiftUI
 import UIKit
 
+private enum RewardTab: String, CaseIterable, Identifiable {
+    case wechat = "微信"
+    case alipay = "支付宝"
+
+    var id: String { rawValue }
+
+    var imageName: String {
+        switch self {
+        case .wechat: return "SealCommunityReward"
+        case .alipay: return "SealCommunityRewardAlipay"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .wechat: return "保存图片后，到微信「扫一扫」选择该图片即可"
+        case .alipay: return "保存图片后，到支付宝「扫一扫」选择该图片即可"
+        }
+    }
+}
+
 struct SealCommunityView: View {
     @Environment(\.openURL) private var openURL
 
     @State private var showRewardCode = false
     @State private var showGzhCode = false
     @State private var saveCoordinator: AlbumSaveCoordinator?
+    @State private var rewardTab: RewardTab = .wechat
 
     @State private var alertTitle = ""
     @State private var alertMessage = ""
@@ -135,7 +157,9 @@ struct SealCommunityView: View {
 
     private var rewardCodeSheet: some View {
         VStack(spacing: 20) {
-            if let image = UIImage(named: "SealCommunityReward") {
+            rewardTabPicker
+
+            if let image = UIImage(named: rewardTab.imageName) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
@@ -151,14 +175,14 @@ struct SealCommunityView: View {
                     }
             }
 
-            Text("保存图片后，到微信「扫一扫」选择该图片即可")
+            Text(rewardTab.hint)
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(Color.sealTextSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
 
             Button {
-                saveCodeToAlbum(imageName: "SealCommunityReward")
+                saveCodeToAlbum(imageName: rewardTab.imageName)
             } label: {
                 Text("保存到相册")
             }
@@ -170,8 +194,36 @@ struct SealCommunityView: View {
                 .foregroundStyle(Color.sealTextSecondary)
                 .padding(.bottom, 12)
         }
-        .padding(.top, 24)
+        .padding(.top, 20)
         .presentationDetents([.medium, .large])
+    }
+
+    private var rewardTabPicker: some View {
+        HStack(spacing: 4) {
+            ForEach(RewardTab.allCases) { tab in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { rewardTab = tab }
+                } label: {
+                    Text(tab.rawValue)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(rewardTab == tab ? .white : Color.sealTextSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            rewardTab == tab ? Color.sealAccent : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(Color.sealSurfaceElevated, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.sealHairline.opacity(0.58), lineWidth: 0.8)
+        }
+        .padding(.horizontal, 24)
     }
 
     private var gzhCodeSheet: some View {
