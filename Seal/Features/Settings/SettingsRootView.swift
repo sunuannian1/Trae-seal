@@ -29,16 +29,6 @@ struct SettingsRootView: View {
                         }
                         sectionDivider
 
-                        settingsLink(value: SettingsRoute.localDevVPN) {
-                            settingsRow(
-                                title: "本地隧道",
-                                value: nil,
-                                icon: "network",
-                                showsChevron: true
-                            )
-                        }
-                        sectionDivider
-
                         settingsLink(value: SettingsRoute.account) {
                             settingsRow(
                                 title: "Apple ID",
@@ -112,6 +102,20 @@ struct SettingsRootView: View {
                         }
                     }
 
+                    settingsSection("社群") {
+                        NavigationLink { SealCommunityView() } label: {
+                            settingsRow(
+                                title: "加入 Seal 社群",
+                                value: nil,
+                                icon: "person.3",
+                                showsChevron: true,
+                                iconColor: Color.sealAccent,
+                                iconImage: "SealCommunityIcon"
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
                     settingsSection("帮助") {
                         NavigationLink { SigningAndRenewalGuideView() } label: {
                             settingsRow(
@@ -141,20 +145,6 @@ struct SettingsRootView: View {
                                 value: "版本 \(appVersion)",
                                 icon: "info.circle",
                                 showsChevron: true
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    settingsSection("社群") {
-                        NavigationLink { SealCommunityView() } label: {
-                            settingsRow(
-                                title: "加入 Seal 社群",
-                                value: nil,
-                                icon: "person.3",
-                                showsChevron: true,
-                                iconColor: Color.sealAccent,
-                                iconImage: "SealCommunityIcon"
                             )
                         }
                         .buttonStyle(.plain)
