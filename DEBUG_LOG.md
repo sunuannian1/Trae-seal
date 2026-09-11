@@ -103,9 +103,27 @@
 - **规矩**：修完一轮编译错误后，**必须再完整编译到底**，直到日志 `** BUILD SUCCEEDED **` 或
   `error:` 行为 0，才能下「修完了」的结论；不要用「上一轮只有 N 个错」来推断本轮已解决全部。
 
+### 9. 发布 release 前必须复核 IPA 版本，别复用目录里残留的同名 Seal.ipa
+- **现象**：版本已发、`releases/latest` 也返回新 tag，用户下载更新却仍是旧版。
+- **根因**：`gh run download` 把 artifact（`Seal-<run_number>` 内含 `Seal.ipa`）解压进 `--dir` 时，
+  若目录已残留上次构建的同名 `Seal.ipa`，会同时出现「根目录旧 `Seal.ipa`」和「`Seal-<n>\Seal.ipa` 新产物」；
+  发布误选了根目录残留旧文件（1.0.9 / build 59），而非新产物（1.0.10 / build 61），二者大小仅差 ~4KB。
+- **规矩**：下载产物前先清空目标目录；发布前用 `python` 读 IPA 内 `Payload/Seal.app/Info.plist` 的
+  `CFBundleShortVersionString` + `CFBundleVersion` 复核版本，别只凭文件名 `Seal.ipa` 判断。
+
 ---
 
 ## 二、历史记录
+
+### 2026-09-12 · 更新检测正常但下载到旧版（发布 release 误用残留 IPA）
+- **现象**：v1.0.10 已发布、`releases/latest` 返回 `v1.0.10`、编译 run headSha 与编译产物均正确，
+  但用户反馈「点下载更新出来的续签页是 1.0.9 版本」。
+- **根因**：发布 v1.0.10 时误用了 `.release_build` 目录里**残留的 1.0.9 IPA**（build 59，26,726,320 bytes），
+  而非新编译产物 `Seal-61\Seal.ipa`（1.0.10 / build 61，26,730,549 bytes）。下载时目录未清空，根目录旧
+  `Seal.ipa` 与新 `Seal-61\Seal.ipa` 并存，发布时只凭文件名选了旧的。
+- **修复**：删除错误附件（asset id `557846624`），用正确产物重新 `gh release upload` v1.0.10。
+- **涉及文件**：无代码改动；流程问题，见常犯坑位第 9 条。
+- **验证状态**：release 附件现为 build 61（1.0.10，26,730,549 bytes）。用户重新检查更新应能正确下载 1.0.10。
 
 ### 2026-09-12 · 免费账号 3 应用上限：按钮文案/行为失配修复 + 支持 Lara 3-App Bypass 跳过预检
 - **现象一（按钮文案与行为不一致）**：免费账号装第 4 个自签应用触发 `SEAL-APPID-DEVICELIMIT` 时，
