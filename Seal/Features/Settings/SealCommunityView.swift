@@ -1,26 +1,7 @@
 import SwiftUI
 import UIKit
 
-private enum RewardTab: String, CaseIterable, Identifiable {
-    case wechat = "微信"
-    case alipay = "支付宝"
 
-    var id: String { rawValue }
-
-    var imageName: String {
-        switch self {
-        case .wechat: return "SealCommunityReward"
-        case .alipay: return "SealCommunityRewardAlipay"
-        }
-    }
-
-    var hint: String {
-        switch self {
-        case .wechat: return "保存图片后，到微信「扫一扫」选择该图片即可"
-        case .alipay: return "保存图片后，到支付宝「扫一扫」选择该图片即可"
-        }
-    }
-}
 
 struct SealCommunityView: View {
     @Environment(\.openURL) private var openURL
@@ -28,7 +9,7 @@ struct SealCommunityView: View {
     @State private var showRewardCode = false
     @State private var showGzhCode = false
     @State private var saveCoordinator: AlbumSaveCoordinator?
-    @State private var rewardTab: RewardTab = .wechat
+    @State private var showQrPreview = false
 
     @State private var alertTitle = ""
     @State private var alertMessage = ""
@@ -58,6 +39,7 @@ struct SealCommunityView: View {
         .sealScreenBackground()
         .sheet(isPresented: $showRewardCode) { rewardCodeSheet }
         .sheet(isPresented: $showGzhCode) { gzhCodeSheet }
+        .fullScreenCover(isPresented: $showQrPreview) { qrPreviewView }
         .alert(alertTitle, isPresented: $showAlert) {
             Button("好的", role: .cancel) { }
         } message: {
@@ -156,75 +138,136 @@ struct SealCommunityView: View {
     }
 
     private var rewardCodeSheet: some View {
-        VStack(spacing: 20) {
-            rewardTabPicker
-
-            if let image = UIImage(named: rewardTab.imageName) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 240, height: 240)
-            } else {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color.sealSurfaceElevated)
-                    .frame(width: 240, height: 240)
-                    .overlay {
+        VStack(spacing: 0) {
+            Button { showQrPreview = true } label: {
+                Group {
+                    if let image = UIImage(named: "SealCommunityReward") {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 150, height: 150)
+                    } else {
                         Text("赞赏码未加载")
                             .font(.footnote)
                             .foregroundStyle(Color.sealTextSecondary)
                     }
+                }
+                .frame(width: 170, height: 170)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.sealHairline.opacity(0.6), lineWidth: 0.8)
+                }
+                .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
             }
+            .buttonStyle(.plain)
+            .padding(.top, 8)
 
-            Text(rewardTab.hint)
+            Text(rewardTitle)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(.primary)
+                .padding(.top, 18)
+
+            Text("Seal 社区 · 赞赏支持")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.sealTextSecondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(Color.sealSurfaceElevated, in: Capsule())
+                .padding(.top, 8)
+
+            Text("保存图片后，到微信「扫一扫」选择该图片即可")
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(Color.sealTextSecondary)
                 .multilineTextAlignment(.center)
+                .padding(.top, 14)
                 .padding(.horizontal, 24)
 
+            HStack(spacing: 12) {
+                Button("支付宝支付") { openAlipay() }
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(alipayBlue)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(alipayBlue.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                Button("打开微信") { openWechat() }
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(wechatGreen)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(wechatGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 24)
+            .padding(.top, 18)
+
             Button {
-                saveCodeToAlbum(imageName: rewardTab.imageName)
+                saveCodeToAlbum(imageName: "SealCommunityReward")
             } label: {
                 Text("保存到相册")
             }
             .sealPrimaryAction(cornerRadius: 14)
             .padding(.horizontal, 24)
+            .padding(.top, 12)
 
             Button("关闭") { showRewardCode = false }
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(Color.sealTextSecondary)
+                .padding(.top, 6)
                 .padding(.bottom, 12)
         }
-        .padding(.top, 32)
+        .padding(.top, 16)
         .presentationDetents([.medium, .large])
     }
 
-    private var rewardTabPicker: some View {
-        HStack(spacing: 4) {
-            ForEach(RewardTab.allCases) { tab in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) { rewardTab = tab }
-                } label: {
-                    Text(tab.rawValue)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(rewardTab == tab ? .white : Color.sealTextSecondary)
-                        .frame(maxWidth: .infinity, minHeight: 40)
-                        .contentShape(Rectangle())
-                        .background(
-                            rewardTab == tab ? Color.sealAccent : Color.clear,
-                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        )
+    private var qrPreviewView: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            VStack(spacing: 20) {
+                if let image = UIImage(named: "SealCommunityReward") {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 320, maxHeight: 320)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .padding(.top, 60)
                 }
-                .buttonStyle(.plain)
+                Text("长按图片保存，或截屏后使用微信扫一扫")
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Button {
+                showQrPreview = false
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+            .padding(20)
+        }
+    }
+
+    private func openAlipay() {
+        guard let url = URL(string: "https://qr.alipay.com/fkx11863lft7h3izxgreqbe") else { return }
+        openURL(url)
+    }
+
+    private func openWechat() {
+        guard let url = URL(string: "weixin://") else { return }
+        UIApplication.shared.open(url) { opened in
+            if !opened {
+                Task { @MainActor in
+                    presentAlert("无法打开微信", "请先安装微信，或在微信内点右上角「+」→「扫一扫」手动赞赏")
+                }
             }
         }
-        .padding(4)
-        .background(Color.sealSurfaceElevated, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.58), lineWidth: 0.8)
-        }
-        .padding(.horizontal, 24)
     }
+
+    private var alipayBlue: Color { Color(red: 22 / 255.0, green: 119 / 255.0, blue: 1.0) }
+    private var wechatGreen: Color { Color(red: 7 / 255.0, green: 193 / 255.0, blue: 96 / 255.0) }
+
+    
 
     private var gzhCodeSheet: some View {
         VStack(spacing: 20) {
