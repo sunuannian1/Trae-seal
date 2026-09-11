@@ -107,6 +107,31 @@
 
 ## 二、历史记录
 
+### 2026-09-11 · 添加 Apple ID 报 503 Service Temporarily Unavailable（客户端标识被 Apple 封禁）
+- **现象**：9 月 10 日全天 iloader 所有用户（含 Seal）添加 Apple ID 均失败，报
+  `HTTP 503 Service Temporarily Unavailable`，来自 `https://gsa.apple.com/grandslam/GsService2`。
+- **根因**：Apple 的 GSA 网关自 2026 年 9 月初起，对任何 `X-MMe-Client-Info` 头里含
+  `com.apple.dt.Xcode` 的请求**在验证凭据之前**直接返回 503。这是服务端硬编码封禁，与账号/
+  密码/连接复用/代理无关，所以「所有人、所有版本」同时中招。**推翻了此前「连接复用导致 503」的判断**
+  （一次性 session 只是掩盖，不是根治）。
+- **上游修法（对齐）**：iloader 提交 `a19f5f0`（"Fix GSA 503: replace blocked Xcode client
+  identifier with akd"）把 `com.apple.dt.Xcode/x.y.z` 换成 `com.apple.akd/1.0`；同根同修的还有
+  AltStore#1790、SideStore、xtool、coffer。共识：**client-info 用 akd，User-Agent 保留 Xcode 不动**
+  （503 只由 `X-MMe-Client-Info` 头触发，与 User-Agent 无关）。
+- **Seal 修复**：`AnisetteV3Client.fetchLocal` 硬编码的 clientInfo（经 `fetchAnisetteData(clientInfo:)`
+  → `deviceDescription` → `ALTAppleAPI` 各请求的 `X-MMe-Client-Info` 头）由
+  `<...com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>` 改为
+  `<...com.apple.AuthKit/1 (com.apple.akd/1.0)>`。
+- **未改动项（有意）**：
+  - AltSign `ALTAppleAPI+Authentication.swift` 的 `User-Agent` 仍含 Xcode——按社区共识 User-Agent
+    保留 Xcode，仅 client-info 用 akd。
+  - AnisetteKit `LocalAnisetteProvider.defaultClientInfo` 仍是 Xcode——它是 `fetchAnisetteData` 等
+    的**默认参数**，认证链路（`AppleAccountClient.authenticate → fetchForAuthentication →
+    fetchLocal`）每次都显式传 clientInfo，永不落到该默认值，属死默认，无需改动。
+- **涉及文件**：`Seal/Infrastructure/Accounts/AnisetteClient.swift`。
+- **验证状态**：代码已改，**未云编译、未真机回归**。真机验证点：添加 Apple ID（本地 anisette）
+  应不再 503，正常进入 2FA/完成登录。
+
 ### 2026-09-11 · 已安装 Seal 版本显示旧号 + 下载按钮卡 0 字节 + 更新弹窗样式统一（公告系统撤销）
 - **现象一（版本不一致）**：已安装列表里 Seal 显示 `1.0.6`，「我的 → 关于 Seal」显示 `1.0.7`
   （两处读的是不同来源：列表读 `AppRecord.version`，关于页读运行中 `Bundle.main` 的

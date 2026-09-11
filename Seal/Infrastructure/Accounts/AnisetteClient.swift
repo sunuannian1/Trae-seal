@@ -127,7 +127,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     private func fetchLocal(identity: AnisetteV3Identity) async throws -> ALTAnisetteData {
         try ensureBundledLibrariesCopied()
         let uuid = try self.uuid(from: identity)
-        let clientInfo = "<MacBookPro18,3> <macOS;26.6;25F84> <com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>"
+        let clientInfo = "<MacBookPro18,3> <macOS;26.6;25F84> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
 
         // 第一次尝试：用 keychain 中已有的 adi.pb
         let existingState = try? await store.load()
