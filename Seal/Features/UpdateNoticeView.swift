@@ -12,7 +12,7 @@ struct UpdateNoticeView: View {
 
     private enum DownloadPhase {
         case idle
-        case downloading(Double)
+        case downloading(Int64, Int64?) // (已接收字节数, 总字节数；总大小未知时为 nil)
         case failed(String)
     }
 
@@ -136,11 +136,20 @@ struct UpdateNoticeView: View {
                             switch phase {
                             case .idle:
                                 Text("下载更新")
-                            case .downloading(let progress):
-                                HStack(spacing: 8) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    Text("\(Int(progress * 100))%")
+                            case .downloading(let received, let total):
+                                if let total, total > 0 {
+                                    let progress = Double(received) / Double(total)
+                                    HStack(spacing: 8) {
+                                        ProgressView(value: progress)
+                                            .controlSize(.small)
+                                        Text("\(Int(progress * 100))%")
+                                    }
+                                } else {
+                                    HStack(spacing: 8) {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                        Text("已下载 \(received.formatted(.byteCount(style: .binary)))")
+                                    }
                                 }
                             case .failed:
                                 Text("重试")
@@ -201,13 +210,13 @@ struct UpdateNoticeView: View {
             return
         }
 
-        phase = .downloading(0)
+        phase = .downloading(0, nil)
         Task {
             do {
                 let localURL = try await UpdateIPADownloader.shared.download(
                     from: ipaURL,
-                    onProgress: { @MainActor progress in
-                        phase = .downloading(progress)
+                    onProgress: { @MainActor received, total in
+                        phase = .downloading(received, total)
                     }
                 )
                 onInstall(localURL)

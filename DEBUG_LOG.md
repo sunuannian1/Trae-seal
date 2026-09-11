@@ -107,6 +107,29 @@
 
 ## 二、历史记录
 
+### 2026-09-11 · 下载进度显示真实字节数 + 赞赏码 tab 点击区修复 + 503 未落地说明
+- **现象 A（下载进度卡住/假进度）**：真机「WiFi 一直转圈、挂梯子后 0% 突然跳到正在续签」。代码层面
+  `UpdateIPADownloader.download` 的 onProgress 已改成 `(Int64, Int64?)`，但 `ProgressDownloadDelegate`
+  仍是 `@Sendable (Double) async -> Void` —— **类型不匹配、编译过不了**，是上轮只改入口、没改 delegate 的中间态。
+  且总大小未知（无 Content-Length）时 UI 拿不到真实字节数，只能干等或发假百分比。
+- **根因 A**：progress 回调链「入口签名 ↔ delegate 属性/init/回调 ↔ UI enum」没一起改；`didWriteData`
+  在 expected ≤ 0 时直接 `return`，总大小未知时进度永远不推进。
+- **修复 A**：`ProgressDownloadDelegate` 全链改 `(Int64, Int64?)`；`didWriteData` expected ≤ 0 时 total 传 nil；
+  `UpdateNoticeView.DownloadPhase` 改 `.downloading(Int64, Int64?)`，total 已知走线性进度条+百分比，
+  total 为 nil 时显示「已下载 X」（`byteCount(style: .binary)`），消除「0% 突然跳续签」的假进度观感。
+- **涉及文件**：`Seal/Infrastructure/UpdateIPADownloader.swift`、`Seal/Features/UpdateNoticeView.swift`。
+- **现象 B（赞赏码 tab）**：抽屉顶部横杠与 tab 贴太紧；tab 只有「微信/支付宝」文字本身可点，整块区域点不动。
+- **修复 B**：`rewardCodeSheet` 顶部 padding 20→32；tab 按钮 label 改 `.frame(maxWidth: .infinity, minHeight: 40)`
+  + `.contentShape(Rectangle())`，整块可点、命中区约 44pt。
+- **涉及文件**：`Seal/Features/Settings/SealCommunityView.swift`。
+- **503 状态说明**：`Connection: close` 修复已 lock 进 `project.yml`（AltSign@87f61ce）且
+  `AnisetteClient.appleRequest` 亦补齐；云编译 #34563251634（c7927b5）已成功。但发布出去的
+  v1.0.4/v1.0.5 未让用户真正装上含修复的包（下载链路坏 + 未走签名安装），真机仍停在旧 1.0.3 IPA，
+  所以「添加 id 还是 503」。另有 IP 限流分支（见常犯坑位 7）：`Connection: close` 只治「连接复用」类 503，
+  换网络/热点后仍 503 多为 Apple 按 IP 封，客户端无法根治。
+- **下一步待办**：bump MARKETING_VERSION → 1.0.6、push、云编译、发布 v1.0.6，真机回归下载进度 + 添加 id。
+- **验证状态**：代码已改，**未云编译、未真机回归**。
+
 ### 2026-09-11 · About「检查更新」弹窗跳浏览器而非应用内安装 + gsa provisioning 路径补 Connection: close
 - **现象一**：关于 Seal →「检查更新」→ 弹窗点「下载更新」，跳到 GitHub Release 网页，而非 Seal 内部下载+签名安装。
 - **根因一**：`AboutView` 把 `UpdateNoticeView(onInstall:)` 传了 `nil`；`handleUpdate` 里 `guard let ipaURL, let onInstall`

@@ -18,10 +18,12 @@ struct UpdateIPADownloader {
         return support.appending(path: "Seal/Downloads", directoryHint: .isDirectory)
     }
 
-    /// 下载 IPA 到本地，返回落盘文件 URL。进度 0–1。
+    /// 下载 IPA 到本地，返回落盘文件 URL。
+    /// - Parameter onProgress: 回调（已接收字节数, 总字节数可空）。总大小未知（无 Content-Length）时
+    ///   `total` 为 nil，由 UI 改为展示「已下载 X」字节数，不再返回假百分比。
     func download(
         from url: URL,
-        onProgress: @escaping @Sendable (Double) async -> Void
+        onProgress: @escaping @Sendable (Int64, Int64?) async -> Void
     ) async throws -> URL {
         try Task.checkCancellation()
         let fileManager = FileManager.default
@@ -99,10 +101,10 @@ enum UpdateDownloadError: LocalizedError {
 }
 
 private final class ProgressDownloadDelegate: NSObject, URLSessionDownloadDelegate {
-    private let onProgress: @Sendable (Double) async -> Void
+    private let onProgress: @Sendable (Int64, Int64?) async -> Void
     private let destination: URL
 
-    init(onProgress: @escaping @Sendable (Double) async -> Void, destination: URL) {
+    init(onProgress: @escaping @Sendable (Int64, Int64?) async -> Void, destination: URL) {
         self.onProgress = onProgress
         self.destination = destination
     }
@@ -116,12 +118,12 @@ private final class ProgressDownloadDelegate: NSObject, URLSessionDownloadDelega
     ) {
         // totalBytesExpectedToWrite 在无 Content-Length（GitHub 302 重定向后的响应、
         // chunked transfer）时为 NSURLSessionTransferSizeUnknown(-1)，不能作为进度分母。
-        // 优先用任务自身的接收字节数锚点；未知长度时按已收到字节推进（避免进度死 0%）。
+        // 优先用任务自身的接收字节数锚点；总大小仍未知时 total 传 nil，由 UI 展示已下载字节数，
+        // 不再发假百分比（否则「0% 突然跳到续签」）。
         var expected = downloadTask.countOfBytesExpectedToReceive
         if expected <= 0 { expected = totalBytesExpectedToWrite }
-        guard expected > 0 else { return }
-        let fraction = Double(totalBytesWritten) / Double(expected)
-        Task { await onProgress(min(max(fraction, 0), 1)) }
+        let total: Int64? = expected > 0 ? expected : nil
+        Task { await onProgress(totalBytesWritten, total) }
     }
 
     func urlSession(

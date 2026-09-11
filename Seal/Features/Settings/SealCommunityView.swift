@@ -194,7 +194,7 @@ struct SealCommunityView: View {
                 .foregroundStyle(Color.sealTextSecondary)
                 .padding(.bottom, 12)
         }
-        .padding(.top, 20)
+        .padding(.top, 32)
         .presentationDetents([.medium, .large])
     }
 
@@ -205,10 +205,10 @@ struct SealCommunityView: View {
                     withAnimation(.easeInOut(duration: 0.18)) { rewardTab = tab }
                 } label: {
                     Text(tab.rawValue)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(rewardTab == tab ? .white : Color.sealTextSecondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                        .contentShape(Rectangle())
                         .background(
                             rewardTab == tab ? Color.sealAccent : Color.clear,
                             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
