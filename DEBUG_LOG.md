@@ -107,6 +107,36 @@
 
 ## 二、历史记录
 
+### 2026-09-11 · 已安装 Seal 版本显示旧号 + 下载按钮卡 0 字节 + 更新弹窗样式统一（公告系统撤销）
+- **现象一（版本不一致）**：已安装列表里 Seal 显示 `1.0.6`，「我的 → 关于 Seal」显示 `1.0.7`
+  （两处读的是不同来源：列表读 `AppRecord.version`，关于页读运行中 `Bundle.main` 的
+  `CFBundleShortVersionString`）。
+- **根因一**：`SelfAppRegistrar.ensureRegistered` 的「待安装自更新源」早退分支
+  （`hasPendingSelfUpdateSource == true` 且 ipa 文件仍在）直接 `return`，不做版本对账。
+  若该标记残留（上次自更新中断、或外部方式装新包后未清），记录版本会**永久停旧值**，
+  即使运行中的 Bundle 已经更新（外部云编译直装 1.0.7）也不会被纠正。
+- **修复一**：早退分支加版本守卫——`Version.compare(existing.version, metadata.version) != .orderedAscending`
+  才保留待安装源；记录版本低于运行版本（残留标记、已被外部更新取代）时落到原子更新，
+  用运行中 Bundle 重打包并写回新版本号。既有的「运行旧版、待装新版」保护不受影响
+  （待装源版本 ≥ 运行版本仍早退保留）。`Version` 工具随之移入独立文件
+  `Seal/Infrastructure/Version.swift`（原定义在公告服务内）。
+- **涉及文件**：`Seal/Core/Renewal/SelfAppRegistrar.swift`、`Seal/Infrastructure/Version.swift`（新）。
+- **现象二（下载按钮没反应）**：更新弹窗点「下载更新」后卡住、按钮显示「已下载 Zero kB」且点不动
+  （`byteCount(.binary)` 对 0 字节输出 "Zero kB"；下载中被 `.disabled(isDownloading)` 锁死，无法取消重试）。
+- **修复二**：① `UpdateIPADownloader` 自定义 session：请求空闲超时 15s + 资源总时长 90s + 支持外部取消
+  （`withTaskCancellationHandler`），卡死 30s 内必然报错或可手动取消；② 下载中再点按钮 = 取消，回到可重试态；
+  ③ `received == 0 && total == nil` 时显示「正在连接…」，不再出现「Zero kB」。
+- **涉及文件**：`Seal/Infrastructure/UpdateIPADownloader.swift`、`Seal/Features/UpdateNoticeView.swift`。
+- **样式统一（更新弹窗）**：经用户澄清「公告弹窗」即更新弹窗，`UpdateNoticeView` 主卡片由毛玻璃
+  `.ultraThinMaterial` 改为主题背景 `Color.sealSurface`、取消按钮 `sealSurfaceElevated`、描边
+  `sealHairline.opacity(0.6)`，圆角/阴影/布局排版不变；独立的远端公告系统按用户确认**已撤销**
+  （`AnnouncementView`/`AnnouncementService` 删除、`RootTabView`/`AppConfiguration` 还原、
+  远端 `announcements.json` 已从 Releases 仓库删除）。
+- **涉及文件**：`Seal/Features/UpdateNoticeView.swift`。
+- **验证状态**：代码已改，**未云编译、未真机回归**。真机验证点：① 直装 1.0.7 云编译包后重启，
+  已安装列表版本应自愈为 1.0.7；② 更新下载在弱网下 15s 内报「网络下载超时」或可点按取消；
+  ③ 更新弹窗为不透明主题背景（非毛玻璃），布局与之前一致。
+
 ### 2026-09-11 · 下载进度显示真实字节数 + 赞赏码 tab 点击区修复 + 503 未落地说明
 - **现象 A（下载进度卡住/假进度）**：真机「WiFi 一直转圈、挂梯子后 0% 突然跳到正在续签」。代码层面
   `UpdateIPADownloader.download` 的 onProgress 已改成 `(Int64, Int64?)`，但 `ProgressDownloadDelegate`

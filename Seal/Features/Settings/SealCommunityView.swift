@@ -9,7 +9,6 @@ struct SealCommunityView: View {
     @State private var showRewardCode = false
     @State private var showGzhCode = false
     @State private var saveCoordinator: AlbumSaveCoordinator?
-    @State private var showQrPreview = false
 
     @State private var alertTitle = ""
     @State private var alertMessage = ""
@@ -39,7 +38,6 @@ struct SealCommunityView: View {
         .sealScreenBackground()
         .sheet(isPresented: $showRewardCode) { rewardCodeSheet }
         .sheet(isPresented: $showGzhCode) { gzhCodeSheet }
-        .fullScreenCover(isPresented: $showQrPreview) { qrPreviewView }
         .alert(alertTitle, isPresented: $showAlert) {
             Button("好的", role: .cancel) { }
         } message: {
@@ -139,34 +137,26 @@ struct SealCommunityView: View {
 
     private var rewardCodeSheet: some View {
         VStack(spacing: 0) {
-            Button { showQrPreview = true } label: {
-                Group {
-                    if let image = UIImage(named: "SealCommunityReward") {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 150, height: 150)
-                    } else {
-                        Text("赞赏码未加载")
-                            .font(.footnote)
-                            .foregroundStyle(Color.sealTextSecondary)
-                    }
+            Group {
+                if let image = UIImage(named: "SealCommunityReward") {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 150, height: 150)
+                } else {
+                    Text("赞赏码未加载")
+                        .font(.footnote)
+                        .foregroundStyle(Color.sealTextSecondary)
                 }
-                .frame(width: 170, height: 170)
-                .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.sealHairline.opacity(0.6), lineWidth: 0.8)
-                }
-                .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
             }
-            .buttonStyle(.plain)
+            .frame(width: 170, height: 170)
+            .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.sealHairline.opacity(0.6), lineWidth: 0.8)
+            }
+            .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
             .padding(.top, 8)
-
-            Text(rewardTitle)
-                .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(.primary)
-                .padding(.top, 18)
 
             Text("Seal 社区 · 赞赏支持")
                 .font(.system(size: 11, weight: .medium))
@@ -217,35 +207,6 @@ struct SealCommunityView: View {
         }
         .padding(.top, 16)
         .presentationDetents([.medium, .large])
-    }
-
-    private var qrPreviewView: some View {
-        ZStack(alignment: .topTrailing) {
-            Color.black.ignoresSafeArea()
-            VStack(spacing: 20) {
-                if let image = UIImage(named: "SealCommunityReward") {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 320, maxHeight: 320)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .padding(.top, 60)
-                }
-                Text("长按图片保存，或截屏后使用微信扫一扫")
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.85))
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Button {
-                showQrPreview = false
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.white.opacity(0.85))
-            }
-            .padding(20)
-        }
     }
 
     private func openAlipay() {

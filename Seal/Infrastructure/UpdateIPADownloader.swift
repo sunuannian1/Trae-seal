@@ -21,6 +21,8 @@ struct UpdateIPADownloader {
     /// 下载 IPA 到本地，返回落盘文件 URL。
     /// - Parameter onProgress: 回调（已接收字节数, 总字节数可空）。总大小未知（无 Content-Length）时
     ///   `total` 为 nil，由 UI 改为展示「已下载 X」字节数，不再返回假百分比。
+    /// - 超时策略：中国大陆网络下 GitHub 资产域可能长时间无响应，仅靠系统默认空闲超时会让
+    ///   下载卡在 0% 不报错；此处收紧请求空闲超时到 15s、总时长硬上限 90s，并支持外部取消。
     func download(
         from url: URL,
         onProgress: @escaping @Sendable (Int64, Int64?) async -> Void
@@ -36,16 +38,31 @@ struct UpdateIPADownloader {
             .appending(path: "seal-update-\(UUID().uuidString).ipa")
 
         let delegate = ProgressDownloadDelegate(onProgress: onProgress, destination: destination)
-        // 中国大陆网络下 GitHub 资产域可能长时间无响应，默认 60s 空闲超时过久会让
-        // 下载卡在 0% 不报错；此处收紧到 30s，失败快速抛出 transport 错误并显示「重试」。
         var request = URLRequest(url: url)
-        request.timeoutInterval = 30
+        request.timeoutInterval = 15
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForResource = 90
+        configuration.waitsForConnectivity = false
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+
+        let task = session.downloadTask(with: request)
         let (temporaryURL, response): (URL, URLResponse)
         do {
-            (temporaryURL, response) = try await URLSession.shared.download(
-                for: request,
-                delegate: delegate
-            )
+            (temporaryURL, response) = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+        } catch is CancellationError {
+            try? fileManager.removeItem(at: destination)
+            throw CancellationError()
+        } catch let nsError as NSError where nsError.code == NSURLErrorCancelled {
+            try? fileManager.removeItem(at: destination)
+            throw CancellationError()
+        } catch let nsError as NSError where nsError.code == NSURLErrorTimedOut {
+            try? fileManager.removeItem(at: destination)
+            throw UpdateDownloadError.timeout
         } catch {
             try? fileManager.removeItem(at: destination)
             throw UpdateDownloadError.transport(error)
@@ -78,6 +95,7 @@ struct UpdateIPADownloader {
 enum UpdateDownloadError: LocalizedError {
     case badHTTPStatus
     case saveFailed
+    case timeout
     case transport(Error)
 
     var errorDescription: String? {
@@ -86,6 +104,8 @@ enum UpdateDownloadError: LocalizedError {
             return "下载失败（服务器响应异常）"
         case .saveFailed:
             return "下载文件保存失败"
+        case .timeout:
+            return "网络下载超时，请检查网络后重试"
         case .transport:
             return "网络下载失败，请稍后重试"
         }
@@ -95,6 +115,7 @@ enum UpdateDownloadError: LocalizedError {
         switch self {
         case .badHTTPStatus: return "SEAL-UPDATE-DL-501"
         case .saveFailed: return "SEAL-UPDATE-DL-502"
+        case .timeout: return "SEAL-UPDATE-DL-504"
         case .transport: return "SEAL-UPDATE-DL-503"
         }
     }

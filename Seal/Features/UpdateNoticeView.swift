@@ -9,6 +9,7 @@ struct UpdateNoticeView: View {
     @Environment(\.openURL) private var openURL
 
     @State private var phase: DownloadPhase = .idle
+    @State private var downloadTask: Task<Void, Never>?
 
     private enum DownloadPhase {
         case idle
@@ -123,11 +124,11 @@ struct UpdateNoticeView: View {
                             .padding(.vertical, 14)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(.ultraThinMaterial)
+                                    .fill(Color.sealSurfaceElevated)
                             )
                             .overlay {
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(.white.opacity(0.15), lineWidth: 0.7)
+                                    .stroke(Color.sealHairline.opacity(0.6), lineWidth: 0.8)
                             }
                     }
 
@@ -144,11 +145,17 @@ struct UpdateNoticeView: View {
                                             .controlSize(.small)
                                         Text("\(Int(progress * 100))%")
                                     }
-                                } else {
+                                } else if received > 0 {
                                     HStack(spacing: 8) {
                                         ProgressView()
                                             .controlSize(.small)
                                         Text("已下载 \(received.formatted(.byteCount(style: .binary)))")
+                                    }
+                                } else {
+                                    HStack(spacing: 8) {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                        Text("正在连接…")
                                     }
                                 }
                             case .failed:
@@ -164,7 +171,6 @@ struct UpdateNoticeView: View {
                                 .fill(Color.sealAccent)
                         )
                     }
-                    .disabled(isDownloading)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 20)
@@ -181,11 +187,11 @@ struct UpdateNoticeView: View {
             .frame(width: 300)
             .background(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color.sealSurface)
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(.white.opacity(0.15), lineWidth: 0.7)
+                    .stroke(Color.sealHairline.opacity(0.6), lineWidth: 0.8)
             }
             .shadow(color: .black.opacity(0.25), radius: 30, x: 0, y: 12)
             .transition(.scale(scale: 0.9).combined(with: .opacity))
@@ -199,7 +205,13 @@ struct UpdateNoticeView: View {
 
     @MainActor
     private func handleUpdate() {
-        guard !isDownloading else { return }
+        // 下载中点按 = 取消，回到可重试状态（避免卡在 0% 时按钮「假死」）
+        if isDownloading {
+            downloadTask?.cancel()
+            downloadTask = nil
+            phase = .idle
+            return
+        }
 
         // 无 IPA 附件或未提供安装回调：回退为跳转浏览器 Release 页
         guard let ipaURL = notice.ipaDownloadURL, let onInstall else {
@@ -211,7 +223,7 @@ struct UpdateNoticeView: View {
         }
 
         phase = .downloading(0, nil)
-        Task {
+        downloadTask = Task {
             do {
                 let localURL = try await UpdateIPADownloader.shared.download(
                     from: ipaURL,
@@ -220,11 +232,14 @@ struct UpdateNoticeView: View {
                     }
                 )
                 onInstall(localURL)
+            } catch is CancellationError {
+                phase = .idle
             } catch let error as UpdateDownloadError {
                 phase = .failed(error.errorDescription ?? "下载失败")
             } catch {
                 phase = .failed("下载失败，请稍后重试")
             }
+            downloadTask = nil
         }
     }
 }
