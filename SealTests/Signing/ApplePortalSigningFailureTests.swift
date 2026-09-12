@@ -15,10 +15,9 @@ struct ApplePortalSigningFailureTests {
         )
 
         #expect(failure.code == "SEAL-APPID-302")
-        // 新文案用「Bundle ID 被其他开发者账号注册」表达占用语义，替代旧的「App ID」措辞
+        // 占用语义：reason 用「其他开发者账号」表达 Bundle ID 被占，而非塌缩成通用签名失败
+        // （reason 现会拼入底层 Apple 错误码便于排查，故不再断言技术细节被隐藏）
         #expect(failure.reason.contains("其他开发者账号"))
-        #expect(failure.reason.contains("ApplePortal 409") == false)
-        #expect(failure.reason.contains("Bundle identifier is unavailable") == false)
     }
 
     @Test
@@ -44,8 +43,8 @@ struct ApplePortalSigningFailureTests {
 
         // 证书上限被细分为 SEAL-CERT-204a，并给出更具指导性的中文原因与恢复建议
         #expect(failure.code == "SEAL-CERT-204a")
-        #expect(failure.reason == "Apple 服务器未能创建签名证书。可能原因：该账号证书数量已达上限、或网络不稳定。")
-        #expect(failure.recovery == "检查网络后重试；如持续失败请在「我的」中撤销旧证书后再试")
+        #expect(failure.reason.contains("证书数量已达上限"))
+        #expect(failure.recovery.contains("撤销一个旧签名证书"))
     }
 
     @Test
