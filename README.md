@@ -5,7 +5,7 @@
 Seal is licensed under the GNU Affero General Public License v3.0. See
 `LICENSE` and `Seal/Resources/ThirdPartyNotices.txt`.
 
-Seal 是个人使用的 iOS IPA 管理、自签、安装与续签工具，最低支持 iOS 16。
+Seal 是个人使用的 iOS IPA 管理、自签、安装与续签工具，最低支持 iOS 17。
 
 ## 功能
 

@@ -92,7 +92,7 @@ struct AboutView: View {
             Divider()
             infoRow("当前系统", "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)")
             Divider()
-            infoRow("最低支持", "iOS 16.0")
+            infoRow("最低支持", "iOS 17.0")
             Divider()
             checkUpdateRow
             Divider()

@@ -93,7 +93,7 @@ struct PairingSettingsView: View {
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("支持 iOS 17+ RemotePairing 和 iOS 17- Lockdown 两种配对格式。")
+            Text("仅支持 iOS 17 及以上设备配对（iOS 16 及以下系统不支持）。")
                 .font(.caption)
                 .foregroundStyle(Color.sealTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
