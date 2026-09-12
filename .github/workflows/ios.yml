@@ -216,7 +216,7 @@ jobs:
       - uses: actions/checkout@v6.0.2
 
       - name: Download unsigned IPA artifact
-        uses: actions/download-artifact@v7.0.1
+        uses: actions/download-artifact@v7
         with:
           name: Seal-${{ github.run_number }}
           path: release
