@@ -986,33 +986,12 @@ actor ApplePortalSigningService {
 
         var existing = try await fetchAppIDs(team: team, session: session)
 
-        // 免费账号 App ID 上限预检：主 App 必须签，扩展签不了自动跳过
-        // 宽松策略：主 App 必须签，扩展签不了就自动跳过，不直接报错
-        if team.type == .free {
-            let maximumFreeAppIDs = 10
-            // 已注册过的主 App 会在下方 Phase 1 直接复用、不占用新名额；
-            // 只有主 App 的 Bundle ID 确实需要“新建”且账号名额已满时，才真正无法签名。
-            let mainAlreadyRegistered = existing.contains {
-                ApplePortalAppIDResolver.matches(
-                    existingBundleIdentifier: $0.bundleIdentifier,
-                    requestedBundleIdentifier: mappedMainBundleID
-                )
-            }
-            let availableAppIDs = max(0, maximumFreeAppIDs - existing.count)
-            // 主 App 已注册可复用、或仍有空余名额可新建，都放行；扩展名额不足由 Phase 1 自动跳过
-            if mainAlreadyRegistered == false, availableAppIDs < 1 {
-                let sortedExpirations = existing.compactMap { $0.expirationDate }.sorted()
-                let earliestExpiration = sortedExpirations.first
-                let expirationText = earliestExpiration.map { DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .short) } ?? "未知"
-                throw Self.failure(
-                    title: "App ID 数量不足",
-                    reason: "当前 Apple ID 已有 \(existing.count) 个 App ID（上限 \(maximumFreeAppIDs)），连主 App 都无法创建。",
-                    recovery: "最早的 App ID 将于 \(expirationText) 过期，过期后可重试；或使用其他 Apple ID 签名。",
-                    code: "SEAL-APPID-305"
-                )
-            }
-            // 扩展数量不足时，后面 Phase 1 会自动跳过签不了的扩展，只签主 App
-        }
+        // 不做「existing.count >= 10 就硬拦」的本地预检（原 SEAL-APPID-305）：
+        // Apple 的真实上限是「7 天内最多注册 10 个 App ID」（滑动窗口），不是「当前存活 App ID ≤ 10」。
+        // 7 天窗口滚动后，老 App ID 仍在存活列表、却已不算进当周窗口，账号可合法攒到 >10 个，
+        // Apple 也照常放行注册——用 existing.count 一刀切会误拦。改为交给 Apple 裁决：真超限时
+        // addAppID 返回 1009/3013，由 appIDFailure/isAppIDRegistrationLimit 兜底归类成 SEAL-APPID-304。
+        // 主 App / 扩展若确实无法新建，Phase 1 会抛错或自动跳过签不了的扩展，语意不变。
 
         var preparedAppIDs: [(original: String, mapped: String, appID: ALTAppID)] = []
         var requestedEntitlements: [String: [String: ProvisioningEntitlementValue]] = [:]

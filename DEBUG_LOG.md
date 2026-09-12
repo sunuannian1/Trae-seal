@@ -115,6 +115,21 @@
 
 ## 二、历史记录
 
+### 2026-09-12 · 免费账号 App ID 上限本地预检（SEAL-APPID-305）误拦：拿「存活数」当「7 天窗口」
+- **现象**：用户 Apple 账号里已有 11 个 App ID，Apple 照样能签名安装；但 Seal 报
+  `SEAL-APPID-305 App ID 数量不足`，称「已有 10 个 App ID，连主 App 都无法创建」，属 false-block。
+- **根因**：`provisioningProfiles` 里免费账号预检用 `existing.count >= 10`（fetchAppIDs 返回的
+  **当前存活 App ID 数**）一刀切硬拦。但 Apple 的真实上限是「**7 天滑动窗口内最多注册 10 个**」，
+  不是「当前存活 ≤ 10」——窗口滚动后老 App ID 仍在存活列表、却已不算进当周窗口，账号可合法攒到
+  >10 个且 Apple 照签，所以拿存活数当上限必然误拦。
+- **修复**：删除 `SEAL-APPID-305` 硬预检，改为交给 Apple 裁决；真超限时 `addAppID` 返回
+  1009/3013，由既有的 `appIDFailure`/`isAppIDRegistrationLimit` 兜底归类成 `SEAL-APPID-304`
+  （文案「7 天内最多注册 10 个 App ID」，更准）。主 App / 扩展无法新建时 Phase 1 仍会抛错或
+  自动跳过签不了的扩展，语意不变。
+- **涉及文件**：`Seal/Infrastructure/Signing/ApplePortalSigningService.swift`（`provisioningProfiles`
+  内删除 `if team.type == .free { ... }` 预检块，改为说明注释）。
+- **验证状态**：本地 Windows 无法编译，待云编译 + 真机复验。
+
 ### 2026-09-12 · 云编译失败：部署目标断言过期 + 扩展 App ID 限额识别误用 `Self.` 引用不同类型
 - **现象**：`9fed6f3` 把最低版本提升为 iOS 17 后，`iOS Fast IPA` 云编译先在「Verify Seal minimum
   deployment target remains iOS 16」步骤 `exit 1`（CI 断言仍写死 16.0，实际读到 17.0）；修掉断言
