@@ -115,6 +115,24 @@
 
 ## 二、历史记录
 
+### 2026-09-12 · 云编译失败：部署目标断言过期 + 扩展 App ID 限额识别误用 `Self.` 引用不同类型
+- **现象**：`9fed6f3` 把最低版本提升为 iOS 17 后，`iOS Fast IPA` 云编译先在「Verify Seal minimum
+  deployment target remains iOS 16」步骤 `exit 1`（CI 断言仍写死 16.0，实际读到 17.0）；修掉断言
+  重新触发后真正进入编译，又崩在 `ApplePortalSigningService.swift:1112/1114`：
+  `type 'Self' has no member 'isAppIDRegistrationLimit'` / `'appIDFailure'`。
+- **根因**：① `ios-fast.yml`/`ios.yml` 里 `test "$TARGET" = "16.0"` 是**写死的旧断言**，没人跟着
+  `9fed6f3` 一起升 17，于是卡在编译前；② `appIDFailure`（95 行）与 `isAppIDRegistrationLimit`
+  （150 行）定义在 **`enum ApplePortalSigningFailure`** 里的 `private static func`，但扩展 App ID
+  限额识别的新调用点落在 **`actor ApplePortalSigningService`** 里，误用 `Self.` 前缀——`Self` 指向
+  actor，根本没有这两个成员；且 `private` 在同文件跨类型也不可见。
+- **修复**：① 两个 workflow 的部署目标断言 `16.0 → 17.0`（Seal 与 SealTunnel 各一处）；
+  ② `appIDFailure` / `isAppIDRegistrationLimit` `private → fileprivate`；③ 调用点 `Self.` →
+  `ApplePortalSigningFailure.`。另：`PacketTunnelProvider.swift` 的 Sendable capture 是 warning，
+  不致命，未动。
+- **涉及文件**：`Seal/Infrastructure/Signing/ApplePortalSigningService.swift`（4 处）、
+  `.github/workflows/ios-fast.yml`、`.github/workflows/ios.yml`。
+- **验证状态**：本地 Windows 无法编译 Swift，待云编译复验。
+
 ### 2026-09-12 · 签名/续签进度条「直接跳」而非丝滑：根因 Rust chunk=total/20，改为 1% 粒度
 - **现象**：签名/续签上传阶段进度条「一格一格跳、不丝滑」，小 IPA（几秒传完）尤其明显，
   几乎 0 一下蹦到 100；环形进度环看似平滑但线性条/百分比是瞬跳。

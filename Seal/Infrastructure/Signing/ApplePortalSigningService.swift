@@ -92,7 +92,7 @@ enum ApplePortalSigningFailure {
         )
     }
 
-    private static func appIDFailure(error: Error, diagnostic: String) -> ImportFailure {
+    fileprivate static func appIDFailure(error: Error, diagnostic: String) -> ImportFailure {
         let nsError = error as NSError
         let rawMessage = nsError.localizedDescription
         let normalized = rawMessage.lowercased()
@@ -147,7 +147,7 @@ enum ApplePortalSigningFailure {
     /// 所以 `fetchAppIDs` 返回的 `existing.count`（当前存活数）少也可能命中 ——
     /// 本地预检放行后，真实 `addAppID` 仍会报错，必须靠这里兜底识别，避免误报成网络问题。
     /// 错误码时代差异：AltStore 老实现用 1009，新一代 AltSign 用 Apple 原生 3013。
-    private static func isAppIDRegistrationLimit(
+    fileprivate static func isAppIDRegistrationLimit(
         _ error: Error,
         normalized: String
     ) -> Bool {
@@ -1109,9 +1109,9 @@ actor ApplePortalSigningService {
                     // 扩展 App ID 创建失败时，先识别是否 App ID 7 天限额（1009/3013）：
                     // 限额是全局的，「移除扩展」也救不了（且 Seal 自身必须保留 SealTunnel 扩展），
                     // 应透传准确原因，而不是包成误导性的「移除扩展后重试」。
-                    if Self.isAppIDRegistrationLimit(error, normalized: (error as NSError).localizedDescription.lowercased()) {
+                    if ApplePortalSigningFailure.isAppIDRegistrationLimit(error, normalized: (error as NSError).localizedDescription.lowercased()) {
                         let ns = error as NSError
-                        throw Self.appIDFailure(
+                        throw ApplePortalSigningFailure.appIDFailure(
                             error: error,
                             diagnostic: "[\(ns.domain) \(ns.code)] \(ns.localizedDescription)"
                         )
