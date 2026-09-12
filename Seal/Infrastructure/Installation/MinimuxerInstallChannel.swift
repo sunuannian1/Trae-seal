@@ -590,8 +590,8 @@ actor MinimuxerInstallChannel: InstallChannel {
         }
         return ImportFailure(
             title: "无法连接到设备",
-            reason: "无法连接设备，且未能识别具体原因。请确认已连接同一 Wi-Fi、LocalDevVPN 已连接，且设备已解锁。",
-            recovery: "重试",
+            reason: "无法连接设备，且未能识别具体原因。请确认 iPhone 已解锁、已连接 Wi-Fi，并检查是否打开 LocalDevVPN（免费账号需先安装并打开外部 LocalDevVPN 软件）。",
+            recovery: "检查是否打开 LocalDevVPN",
             code: "SEAL-INSTALL-705"
         )
     }
@@ -643,7 +643,7 @@ actor MinimuxerInstallChannel: InstallChannel {
             return ImportFailure(
                 title: "与设备连接断开",
                 reason: "设备返回：\(detail)",
-                recovery: "检查 WiFi 连接后重试；大文件安装请保持 Seal 在前台",
+                recovery: "检查 Wi-Fi 连接后重试；大文件安装请保持 Seal 在前台",
                 code: "SEAL-INSTALL-702d"
             )
         }
@@ -754,8 +754,8 @@ actor MinimuxerInstallChannel: InstallChannel {
             case .tunnel:
                 return ImportFailure(
                     title: "无法经本地隧道连到设备",
-                    reason: "LocalDevVPN 虽显示连接，但设备服务端口暂时不可达。请断开后重连 LocalDevVPN、确认网络正常后重试。\(suffix)",
-                    recovery: "重连 LocalDevVPN 后重试",
+                    reason: "LocalDevVPN 虽显示连接，但设备服务端口暂时不可达。请检查 VPN 是否正常连接、网络是否稳定后重试。\(suffix)",
+                    recovery: "检查是否打开 LocalDevVPN",
                     code: "SEAL-INSTALL-710"
                 )
             case .unknown:
@@ -804,35 +804,35 @@ actor MinimuxerInstallChannel: InstallChannel {
 
     private static let vpnTunnelUnavailableFailure = ImportFailure(
         title: "LocalDevVPN 未就绪",
-        reason: "LocalDevVPN 隧道不可用，无法连接设备。请先连接 Wi-Fi，并确认 LocalDevVPN 已启动且处于已连接状态。",
-        recovery: "打开 LocalDevVPN 后重试",
+        reason: "本地隧道未就绪，无法连接设备。免费账号签名的 Seal 需先安装并打开外部 LocalDevVPN 软件；付费账号的 Seal 会自动拉起内置隧道，请检查 VPN 是否已开启，并确认已连接 Wi-Fi。",
+        recovery: "检查是否打开 LocalDevVPN",
         code: "SEAL-INSTALL-701"
     )
 
     private static let deviceNotRespondingFailure = ImportFailure(
         title: "设备未响应",
-        reason: "设备未响应。请确认 iPhone 已解锁、与电脑处于同一 Wi-Fi，且 LocalDevVPN 已连接。",
-        recovery: "重试",
+        reason: "设备未响应。请确认 iPhone 已解锁、已连接 Wi-Fi，并检查是否打开 LocalDevVPN（免费账号需先安装并打开外部 LocalDevVPN 软件）。",
+        recovery: "检查是否打开 LocalDevVPN",
         code: "SEAL-INSTALL-708"
     )
 
     private static let channelNotReadyFailure = ImportFailure(
         title: "设备连接失败",
-        reason: "无法建立到设备的连接（超时、网络不可达或无设备）。请确认已连接同一 Wi-Fi、LocalDevVPN 已连接，且 iPhone 已解锁。",
-        recovery: "重试",
+        reason: "无法建立到设备的连接（超时、网络不可达或无设备）。请确认 iPhone 已解锁、已连接 Wi-Fi，并检查是否打开 LocalDevVPN（免费账号需先安装并打开外部 LocalDevVPN 软件）。",
+        recovery: "检查是否打开 LocalDevVPN",
         code: "SEAL-INSTALL-706b"
     )
 
     private static let channelTimeoutFailure = ImportFailure(
         title: "本地通道连接超时",
-        reason: "LocalDevVPN 隧道在限定时间内未就绪。已自动重试过；仍失败请确认已连接 Wi-Fi 且 LocalDevVPN 处于连接状态后再试。",
-        recovery: "重新检查",
+        reason: "本地隧道在限定时间内未就绪，已自动重试过。仍失败请确认已连接 Wi-Fi，并检查是否打开 LocalDevVPN（免费账号需先安装并打开外部 LocalDevVPN 软件）。",
+        recovery: "检查是否打开 LocalDevVPN",
         code: "SEAL-INSTALL-706t"
     )
 
     private static let installTimeoutFailure = ImportFailure(
         title: "安装超时",
-        reason: "向设备传输并安装应用超过 10 分钟仍未完成，系统已自动重试。若多次出现，请确认 LocalDevVPN 连接稳定后再试。",
+        reason: "向设备传输并安装应用超过 10 分钟仍未完成，系统已自动重试。若多次出现，请检查 LocalDevVPN 连接是否稳定后再试（免费账号需使用外部 LocalDevVPN 软件）。",
         recovery: "重试",
         code: "SEAL-INSTALL-702t"
     )

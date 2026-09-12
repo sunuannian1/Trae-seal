@@ -1131,7 +1131,7 @@ final class SettingsViewModel: ObservableObject {
                 throw Self.failure(
                     title: "没有可用开发者团队",
                 reason: "这个 Apple ID 下没有可用于签名的开发者团队。",
-                recovery: "确认该 Apple ID 已注册开发者账号（免费账号即可），或更换其他 Apple ID",
+                recovery: "确认该 Apple ID 可正常登录且已同意 Apple 开发者协议（免费账号即可），或更换其他 Apple ID",
                     code: "SEAL-AUTH-114"
                 )
             }

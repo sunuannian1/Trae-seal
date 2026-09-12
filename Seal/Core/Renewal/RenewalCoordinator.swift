@@ -80,6 +80,15 @@ actor RenewalCoordinator {
         if let failure = error as? ImportFailure {
             // 本地确实没有这条应用记录，重试也找不回来
             if failure.code == "SEAL-RENEW-404" { return false }
+            // 确定性失败：重试/重新安装都无法改变结果，必须立即终止不做无效重试，
+            // 与单签路径 SigningProgressView.isNonRetryableFailure 对齐。
+            // 批量续签已传 bypassFreeAccountDeviceLimit: true 跳过本机 3-app 预检，
+            // 超限/拒绝会真正打到 installd 返回 702l；若不排除，将完整重签+上传+等待 3 次。
+            if failure.code == "SEAL-APPID-DEVICELIMIT"   // 免费账号 3 应用上限（本机预检）
+                || failure.code == "SEAL-INSTALL-702l"     // 安装被 iOS 拒绝（3 应用上限/完整性校验）
+                || failure.code == "SEAL-INSTALL-702s" {   // 设备存储空间不足
+                return false
+            }
             return true
         }
         return true
@@ -93,7 +102,7 @@ actor RenewalCoordinator {
         return ImportFailure(
             title: "续签失败",
             reason: "续签过程遇到临时错误（\(detail)），已自动重试仍未恢复。",
-            recovery: "检查网络与 LocalDevVPN 后重试；如持续失败请导出日志反馈",
+            recovery: "检查网络后重试；如持续失败请导出日志反馈",
             code: "SEAL-RENEW-500"
         )
     }
@@ -157,6 +166,10 @@ actor RenewalCoordinator {
                         requestedBundleIdentifier: latestApp.mappedBundleIdentifier ?? latestApp.preferredBundleIdentifier,
                         selectedCertificateSerialNumber: nil,
                         forceResign: true,
+                        // 续签是覆盖已装应用，不新增免费账号设备槽位；已绕过 3-app 上限
+                        // （设备级跨 team）装 6 个应用的用户，批量续签时必须跳过本机预检，
+                        // 交回 installd 裁决，否则全部被 SEAL-APPID-DEVICELIMIT 误拦。
+                        bypassFreeAccountDeviceLimit: true,
                         progress: { stage in
                             if isSeal, stage == .pushing || stage == .installing {
                                 try? await queueStore.markCompleted(appID: item.appID)

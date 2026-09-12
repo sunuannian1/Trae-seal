@@ -594,9 +594,6 @@ struct SigningWorkspace: Sendable {
         }
     }
 
-    /// 大 IPA 优化：剥离 arm64e 架构，只保留 arm64
-    /// 大 IPA 优化：剥离非 arm64 架构，只保留 arm64
-    /// 支持 fat32(0xCAFEBABE) 和 fat64(0xCAFEBABF)，rork-sign 只支持 64-bit slice
     /// 清理其它签名/注入工具留下的残留（prepare 阶段、重签之前）。
     ///
     /// 部分 IPA 曾被 ESign 等工具签过，会在 .app 内留下注入脚本与工具标记（实测样本：
@@ -775,6 +772,10 @@ struct SigningWorkspace: Sendable {
         }
     }
 
+    /// 大 IPA 优化：剥离 FAT 二进制里的 arm64e 等多余 slice，只保留 arm64 以瘦身。
+    /// 仅处理 fat32/fat64（magic 0xBEBAFECA/0xBFBAFECA）；thin 二进制（含 thin arm64e）
+    /// 无多余 slice 可剥离，原样保留交由 RorkSigner 重签——这是预期行为，不要按
+    /// 「剥离 thin arm64e」去改（thin arm64e 没有普通 arm64 slice，剥了就没有可运行代码）。
     private func stripArm64eArchitecture(in appURL: URL) throws {
         let fileManager = FileManager.default
         guard let enumerator = fileManager.enumerator(

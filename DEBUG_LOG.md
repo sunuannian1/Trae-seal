@@ -115,6 +115,150 @@
 
 ## 二、历史记录
 
+### 2026-09-12 · 签名/续签进度条「直接跳」而非丝滑：根因 Rust chunk=total/20，改为 1% 粒度
+- **现象**：签名/续签上传阶段进度条「一格一格跳、不丝滑」，小 IPA（几秒传完）尤其明显，
+  几乎 0 一下蹦到 100；环形进度环看似平滑但线性条/百分比是瞬跳。
+- **根因**：Rust `stage_via_afc`（`Vendor/Minimuxer/RustBridge/src/idevice_support/install.rs`）
+  用 `let chunk = (total / 20).max(256 * 1024)` —— 整个 IPA 只切 **20 块**，配合
+  `if pct > last_pct`（整数百分比递增才回调），整个传输只上报 **约 20 个点（每跳 +5%）**。
+  这不是 UI 缺动画，而是**源头进度值本身就稀疏**。（UI 层线性 `ProgressView` 无 `.animation`、
+  百分比 `Int(progress*100)` 截断，是次级加剧，非根因。）
+- **修复**：chunk 改为 `(total / 100 + 1).max(64 * 1024).min(1024 * 1024)`，把进度粒度从 5% 提细到
+  1%、回调点从 ~20 个增到 ~100 个；上限 1MiB 与底层 AFC 分块对齐（避免 FFI 回调过频），下限 64KiB
+  保证小 IPA 也有足够回调点（不致 33% 一跳）。
+- **涉及文件**：`Vendor/Minimuxer/RustBridge/src/idevice_support/install.rs`（`stage_via_afc`，1 行。
+  纯进度反馈，不影响写入正确性——底层 AFC 本按 1MiB 自动分块、`written` 累加 + 回读
+  `info.size == ipa_bytes.len()` 校验兜底）。
+- **验证状态**：仅改 Rust、本机无法编译，待 Xcode 编译 + 真机回归（微信/黄豆短剧/抖音等大中小
+  IPA 各验一次，确认体感丝滑且安装/续签成功不受影响）。
+
+### 2026-09-12 · 抖音 addAppID 1100 根因查证：端点一致性确认非客户端 bug（无代码改动）
+- **现象**：签名抖音时，同一 session 的 `fetchTeams` / `fetchCertificates` / `fetchAppIDs`（查询）
+  均成功，唯独 `addAppID`（新建 `com.ss.iphone.ugc.Aweme…` Bundle）返回
+  `Apple.APIError 1100 Your session has expired. Please log in.`。日志显示账号「5 个可用 App ID」、
+  无 3013/1009 痕迹，排除「App ID 7 天 10 个限额」（另一个独立限制，抖音 1 主 + 8 扩 = 9 个
+  App ID 会额外撞它，但本次卡点不是它）。
+- **根因（查证结论）**：客户端层面 `addAppID` 与 `fetchAppIDs` **完全等价** —— 二者同走 AltSign
+  `sendRequest`（`ALTAppleAPI.swift:205`），同一 `X-Apple-GS-Token`(authToken)、machineID、
+  oneTimePassword、localUserID、deviceUniqueIdentifier、date 认证头，同一 `baseURL =
+  developerservices2.apple.com/services/QH65B2/`，唯一区别是 action 名（`ios/addAppId.action` vs
+  `ios/listAppIds.action`）与 `additionalParameters`（写参数 vs nil）。`1100` 是 Apple 在 plist
+  `resultCode` 里返回的（`processResponse`），`addAppID` 的 `resultCodeHandler` 只认
+  35/9120/9401/9412，1100 落 default 分支原样透传为 `NSError(code:1100, "Your session has
+  expired...")`。→ **1100 单独落在 addAppID 是 Apple 服务端对「写操作 addAppId.action」的 session
+  判定行为，非 Seal/AltSign 代码 bug，客户端无法通过改端点/认证头消除。**
+  （注：`certificate→servicesBaseURL(v1 JSON)` 与 `AppID→baseURL(QH65B2 plist)` 是两套 API，但
+  二者请求都发生在 addAppID 之前且已成功，与本结论不冲突。）
+- **顺带确认（同轮）**：
+  ① `reauthenticate`（1100 时自动重登，`AppleAccountClient.swift:140`）全仓库**零调用点**，
+  `AppleServiceFailurePolicy` 注释「下次签名自动重登」与实际不符；但**不建议接线**——签名/续签是
+  LocalDevVPN 环境、自动重登访问 gsa.apple.com 必败（`ApplePortalSigningService.swift:294`），且
+  历史上「清指纹/换 anisette 重试」曾造成全部账号掉线回归（`AppleAccountClient.authenticate` 注释）。
+  ② `removeIdentifier()` 零调用点；identifier 丢失只可能来自换 Team 重签名导致 Keychain access
+  group 变化 → `loadIdentity` 静默重生成新 `deviceIdentifier`（`AnisetteClient.swift:332`），进而 1100。
+- **涉及文件**：`.dev-workspace/forks/altsign-mod/Sources/ALTAppleAPI+Operations.swift`、
+  `ALTAppleAPI.swift`（查证，未改）；`AppleAccountClient.swift`、`AnisetteClient.swift`（顺带确认）。
+- **验证状态**：纯代码查证，**无代码改动**。可操作结论：抖音 addAppID 1100 客户端唯一缓解路径是
+  「重新验证 Apple ID 拿新鲜 authToken 后立刻签抖音」（即 `SEAL-AUTH-107` 引导的方向）；其本质是
+  免费账号 + Apple 写接口会话校验的硬约束，非 Seal 可修复缺陷。
+
+### 2026-09-12 · 批量续签误拦已绕过 3-app 上限的用户 + 抖音签名 1100 会话过期分类错误
+- **现象**：① 用户（Lara）已用「绕过 3-app 上限」装了 6 个应用，点「全部续签」时 6 个全部失败
+  （提示「应用数量已达上限」/ `SEAL-APPID-DEVICELIMIT`），但逐个单独续签却能成功；
+  ② 签名抖音时 Apple 返回 1100 会话过期，却显示误导性的「App ID 创建失败 / 检查网络」
+  （`SEAL-APPID-303`），而非「会话已过期 / 重新登录」。
+- **根因**：
+  ① `RenewalCoordinator.refreshAll` 调用 `signingCoordinator.signAndInstall` 时漏传
+  `bypassFreeAccountDeviceLimit`，导致已装 6 个应用的用户在批量续签时被
+  `enforceFreeAccountInstallLimit` 预检（设备级跨 team，occupied=5≥3）全部误拦。单独续签能过
+  是因为单签路径有「继续绕过」按钮走 `continueBypassingDeviceLimit` 传 true，批量路径没有该按钮、
+  直接判失败。
+  ② `ApplePortalSigningFailure.appIDFailure`（App ID 创建阶段）漏识别 1100 会话过期，落进通用
+  「App ID 创建失败 / `SEAL-APPID-303`」分支误导排查（上轮曾做「全局归类」后回退，本次只在 App ID
+  阶段精准补识别，不扩散到其他阶段）。
+- **修复**：
+  ① `RenewalCoordinator.swift` 续签调用补传 `bypassFreeAccountDeviceLimit: true` —— 续签是覆盖
+  已装应用、不新增免费账号设备槽位，预检应跳过、交回 installd 裁决；单个应用续签仍走
+  `runSigning`（默认 false），与既有「继续绕过」按钮行为保持一致。
+  ② `ApplePortalSigningService.swift` `appIDFailure` 在 Bundle ID 占用 / 7 天限额判断之前，
+  新增 `nsError.code == 1100 || normalized.contains("session has expired") ||
+  diagnostic.contains("1100")` 识别，归类 `SEAL-AUTH-107`（「会话已过期 / 重新登录」），
+  与 `.account` 阶段一致；随后会被 `signOnce` 既有 `SEAL-AUTH-107` catch 兜底提示「去我的页面
+  重新验证 Apple ID」。
+  ③ 补上 `RenewalCoordinator.isRetryable` 的确定性失败排除：`SEAL-APPID-DEVICELIMIT` /
+  `SEAL-INSTALL-702l`（iOS 拒绝：3 应用上限/完整性校验）/ `SEAL-INSTALL-702s`（存储不足）
+  返回不可重试，与单签路径 `SigningProgressView.isNonRetryableFailure` 对齐——绕过上限后批量
+  续签若真正超限会被 installd 拒绝为 `702l`，若不排除会完整重签+上传+等待 3 次，且违反
+  「确定性失败立即终止、不做无效重试」硬约束。
+- **涉及文件**：`Seal/Core/Renewal/RenewalCoordinator.swift`、
+  `Seal/Infrastructure/Signing/ApplePortalSigningService.swift`。
+- **验证状态**：代码已改，未云编译、未真机回归。验证点：① 绕过 3-app 上限装 6 个应用后
+  「全部续签」不再被设备上限误拦；② 免费账号 authToken 过期（几小时后）签名抖音时提示
+  「会话已过期 / 重新登录」而非「App ID 创建失败 / 检查网络」。注：1100 根因是免费账号
+  authToken 仅几小时有效（Apple 硬限制），Seal 只能过期后正确引导重新登录，无法延长会话；
+  ③ 设备状态与记录不一致（`lastInstalledAt` 残留）触发真正超限时，批量续签立即终止不再转圈。
+
+### 2026-09-12 · 免费账号 App ID 7 天限额误报：3013 未被识别（iPhone17 / iOS27 beta3 用户日志）
+- **现象**：用户（iPhone 17, iOS 27 beta3）签名 LiveContainer 报「App ID 创建失败 / 检查网络后
+  重试」（`SEAL-APPID-303`）；续签 Seal 报「扩展无法创建 App ID / 移除扩展后重试」
+  （`SEAL-EXT-401`）。日志关键行：`[AltStore.AppleDeveloperError 3013] You may only register
+  10 App IDs every 7 days.`，且 07:49:42「Apple App ID 已同步：2 个可用 App ID」。
+- **根因**：**Apple 免费账号「7 天内最多注册 10 个 App ID」限额触发**，与 iOS 27 beta3 / iPhone 17
+  本身无关（任何系统都会触发）。Seal 有两个分类 bug 导致误报：
+  ① `appIDFailure` 只匹配 AltStore 老错误码 `1009`，漏了新一代 AltSign 的 Apple 原生码 `3013`，
+  于是 3013 落进通用「App ID 创建失败」分支 → 误导「检查网络」；
+  ② 扩展 App ID 创建失败被外层 catch 笼统包成 `SEAL-EXT-401`「移除扩展后重试」，把全局限额
+  掩盖成「扩展有问题」——但限额是全局的，移除扩展也救不了，且 Seal 自身必须保留 SealTunnel 扩展。
+  **关键认知**：该限额是「7 天滚动注册总数」，不是「当前存活的 App ID 数量」，所以本地预检里
+  `availableAppIDs = 10 - existing.count`（existing.count=2）放行后，真实 `addAppID` 才报 3013。
+- **修复**：
+  - 新增 `ApplePortalSigningFailure.isAppIDRegistrationLimit(_:normalized:)`，统一识别 1009/3013
+    + 「every 7 days / 10 app ids / register / maximum / limit」等关键词。
+  - `appIDFailure` 改用该共享函数 → 3013 正确归类 `SEAL-APPID-304`「7 天内最多注册 10 个 App ID」。
+  - 扩展创建失败（`allowDroppingExtensions==false` 分支）先识别限额，命中则透传 `appIDFailure`
+    的真正结果，不再包成误导性的「移除扩展」；非限额才走 `SEAL-EXT-401`。
+- **涉及文件**：`Seal/Infrastructure/Signing/ApplePortalSigningService.swift`
+  （`appIDFailure`、新增 `isAppIDRegistrationLimit`、扩展 catch 分支）。
+- **验证状态**：代码已改，未云编译、未真机回归。验证点：免费账号 7 天名额满后签名任意
+  应用（主 App 或扩展）均提示「7 天内最多注册 10 个 App ID」而非「检查网络 / 移除扩展」。
+  **用户侧根治**：等 7 天过期、改用其他 Apple ID、或用付费账号；Seal 无法绕过 Apple 硬限制。
+
+### 2026-09-12 · 全项目文案审计：3 处新发现问题修复
+- **现象**：对 v1.0.13 全项目流程链 → 文案做精准匹配审计，发现 3 处与逻辑行为不匹配的文案。
+- **根因**：①「注册开发者账号」措辞易让免费账号用户误以为需付费注册（免费账号登录 + 同意
+  Apple 开发者协议即有 Personal Team）；②续签兜底（SEAL-RENEW-500）点名「检查 LocalDevVPN」，
+  该兜底仅处理非 ImportFailure，隧道错误已有 701 等专码，且免费账号无外部 LocalDevVPN 可操作；
+  ③SEAL-APPID-303 的 recovery 未覆盖 1100 会话过期场景（1100 会落入此分支，换 Bundle ID 无用）。
+- **修复**：
+  - `SettingsViewModel.swift:1134`（SEAL-AUTH-114）：「已注册开发者账号（免费账号即可）」→
+    「可正常登录且已同意 Apple 开发者协议（免费账号即可）」。
+  - `RenewalCoordinator.swift:96`（SEAL-RENEW-500）：「检查网络与 LocalDevVPN 后重试」→
+    「检查网络后重试」。
+  - `ApplePortalSigningService.swift:130`（SEAL-APPID-303）：recovery 前置「若提示会话已过期，
+    请先前往「我的」页面重新验证 Apple ID」，再回退网络/Bundle ID 引导。
+- **涉及文件**：`Seal/Features/Settings/SettingsViewModel.swift`、
+  `Seal/Core/Renewal/RenewalCoordinator.swift`、
+  `Seal/Infrastructure/Signing/ApplePortalSigningService.swift`。
+- **验证状态**：代码已改，未云编译、未真机回归。注：1100 归属仍走 SEAL-APPID-303 分支
+  （上轮把 1100 全局归类修复回退了），本次仅从文案侧给出「先重新验证」引导兜底。
+
+### 2026-09-12 · 隧道类报错文案口径修订（免费/付费账号区分 + 统一「检查是否打开 LocalDevVPN」）
+- **现象**：v1.0.13 及更早的安装/配对报错文案中，隧道类错误（701/705/706b/706t/708/710/702t）
+  一律让用户「打开 / 重连 / 确认 LocalDevVPN」，对两类用户都不精准：① 免费账号签名的 Seal
+  内置隧道（SealTunnel）因缺 `networkextension` entitlement 起不来（必须装外部 LocalDevVPN
+  软件），文案未告知；② 付费账号的隧道由 Seal 自动拉起（同名内置 VPN），没有可手动「打开」的
+  外部软件入口。另有 708 文案「与电脑处于同一 Wi-Fi」纯错误——安装链路在手机端（本地隧道连本机），
+  与电脑无关（历史遗留）。
+- **根因**：文案起草时按「隧道=外部软件」的旧模型；且漏了「内置隧道需付费账号签名」这一关键约束。
+- **修复**：隧道类报错 recovery 统一为「检查是否打开 LocalDevVPN」（对免费/付费两种账号都可操作）；
+  reason 区分两种情况——免费账号签名的 Seal 需「先安装并打开外部 LocalDevVPN 软件」，
+  付费账号「自动拉起内置隧道，检查 VPN 是否开启」；708 去掉「与电脑处于同一 Wi-Fi」；
+  702d「WiFi」统一为「Wi-Fi」；709（隧道已通、握手失败）保持「保持前台后重试」不变。
+- **涉及文件**：`Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift`（701/705/706b/706t/
+  708/710/702t 共 7 处文案）。
+- **验证状态**：代码已改，未云编译、未真机回归。验证点：免费账号用户卡在「准备环境」时看到
+  「免费账号需安装并打开外部 LocalDevVPN 软件」引导；付费账号行为不变。
+
 ### 2026-09-12 · Seal 内部更新后 Apple ID 失效需重新添加（覆盖安装签名 Team 变化 → iOS 判为新应用清空数据）
 - **现象**：通过 Seal 内部更新（自更新 / 自续签）升级到新版本后，打开新版时已添加的 Apple ID 全部失效，
   需重新添加；已安装应用列表也一起丢失。

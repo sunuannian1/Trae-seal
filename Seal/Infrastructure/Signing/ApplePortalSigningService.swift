@@ -97,6 +97,18 @@ enum ApplePortalSigningFailure {
         let rawMessage = nsError.localizedDescription
         let normalized = rawMessage.lowercased()
 
+        // Apple 会话过期（1100）在 App ID 创建阶段也会出现（如抖音签名时），
+        // 必须与账户阶段一致归为 SEAL-AUTH-107，否则会落进下方「App ID 创建失败」
+        // 分支被误报成网络/标注问题。
+        if nsError.code == 1100 || normalized.contains("session has expired") || diagnostic.contains("1100") {
+            return ImportFailure(
+                title: "Apple 会话已过期",
+                reason: "当前 Apple ID 的登录状态已过期，需要重新登录后才能签名或续签。\nApple 返回：\(diagnostic)",
+                recovery: "重新登录",
+                code: "SEAL-AUTH-107"
+            )
+        }
+
         if nsError.code == 3011
             || normalized.contains("bundle identifier is unavailable")
             || normalized.contains("already registered by another developer account")
@@ -109,13 +121,10 @@ enum ApplePortalSigningFailure {
             )
         }
 
-        // 免费账号 App ID 数量上限（AltStore 官方错误码 1009）
-        if nsError.code == 1009
-            || normalized.contains("maximum")
-            || normalized.contains("limit")
-            || normalized.contains("too many")
-            || normalized.contains("no more")
-            || (normalized.contains("app id") && (normalized.contains("exceed") || normalized.contains("reached"))) {
+        // 免费账号 App ID 数量上限（7 天内最多注册 10 个）。
+        // 覆盖 AltStore 老错误码 1009，以及新一代 AltSign 使用的 Apple 原生错误码 3013
+        //（过去漏匹配 3013，落进下方通用「App ID 创建失败」分支，被误报成网络问题）。
+        if Self.isAppIDRegistrationLimit(error, normalized: normalized) {
             return ImportFailure(
                 title: "7 天内最多注册 10 个 App ID",
                 reason: "已达到 App ID 数量上限。App ID 无法手动删除，7 天后自动过期。请到「已签名 App」查看过期时间，或换其他 Apple ID 签名。",
@@ -127,9 +136,31 @@ enum ApplePortalSigningFailure {
         return ImportFailure(
             title: "App ID 创建失败",
             reason: "Apple 服务器未能创建该应用的 App ID。Apple 返回：\(diagnostic)",
-            recovery: "检查网络后重试；如持续失败，尝试更换 Bundle ID 或使用其他开发者账号",
+            recovery: "若提示会话已过期，请先前往「我的」页面重新验证 Apple ID；否则检查网络后重试，或尝试更换 Bundle ID / 使用其他开发者账号",
             code: "SEAL-APPID-303"
         )
+    }
+
+    /// 免费账号「7 天内最多注册 10 个 App ID」的识别。
+    ///
+    /// 关键点：该限制是 **Apple 的 7 天滑动窗口计数**，不是「当前存活的 App ID 数量」，
+    /// 所以 `fetchAppIDs` 返回的 `existing.count`（当前存活数）少也可能命中 ——
+    /// 本地预检放行后，真实 `addAppID` 仍会报错，必须靠这里兜底识别，避免误报成网络问题。
+    /// 错误码时代差异：AltStore 老实现用 1009，新一代 AltSign 用 Apple 原生 3013。
+    private static func isAppIDRegistrationLimit(
+        _ error: Error,
+        normalized: String
+    ) -> Bool {
+        let code = (error as NSError).code
+        if code == 1009 || code == 3013 { return true }
+        return normalized.contains("maximum")
+            || normalized.contains("limit")
+            || normalized.contains("too many")
+            || normalized.contains("no more")
+            || normalized.contains("every 7 days")
+            || normalized.contains("10 app ids")
+            || (normalized.contains("app id")
+                && (normalized.contains("exceed") || normalized.contains("reached") || normalized.contains("register")))
     }
 
     private static func certificateFailure(error: Error, diagnostic: String) -> ImportFailure {
@@ -1075,6 +1106,16 @@ actor ApplePortalSigningService {
             } catch {
                 guard mappedBundleID != mappedMainBundleID else { throw error }
                 guard allowDroppingExtensions else {
+                    // 扩展 App ID 创建失败时，先识别是否 App ID 7 天限额（1009/3013）：
+                    // 限额是全局的，「移除扩展」也救不了（且 Seal 自身必须保留 SealTunnel 扩展），
+                    // 应透传准确原因，而不是包成误导性的「移除扩展后重试」。
+                    if Self.isAppIDRegistrationLimit(error, normalized: (error as NSError).localizedDescription.lowercased()) {
+                        let ns = error as NSError
+                        throw Self.appIDFailure(
+                            error: error,
+                            diagnostic: "[\(ns.domain) \(ns.code)] \(ns.localizedDescription)"
+                        )
+                    }
                     throw Self.failure(
                         title: "签名失败",
                         reason: "Apple 返回：扩展无法创建 App ID",

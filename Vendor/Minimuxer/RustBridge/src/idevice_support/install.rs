@@ -175,10 +175,13 @@ where
 
     if !ipa_bytes.is_empty() {
         // 对齐上游 jas install_ipa：分块写入并在每块后按已写字节折算为 0-100 上报。
-        // 底层 AFC 本就按 1MiB 自动分块，这里只为了让大 IPA 传输阶段有可见进度
+        // 底层 AFC 本就按 1MiB 自动分块，这里只为了让 IPA 传输阶段有可见进度
         // （带宽不变，纯进度反馈），并避免一次性整块写入占住内存。
+        // chunk 取 total 的 ~1%（约 100 块）而非 1/20：把进度粒度从 5% 提细到 1%、
+        // 回调点从 ~20 个增到 ~100 个，传输进度条更丝滑；上限 1MiB 与底层 AFC 分块
+        // 对齐、避免 FFI 回调过频，下限 64KiB 保证小 IPA 也有足够回调点（不致 33% 一跳）。
         let total = ipa_bytes.len();
-        let chunk = (total / 20).max(256 * 1024);
+        let chunk = (total / 100 + 1).max(64 * 1024).min(1024 * 1024);
         let mut written = 0usize;
         let mut last_pct = 0u64;
         for piece in ipa_bytes.chunks(chunk) {
