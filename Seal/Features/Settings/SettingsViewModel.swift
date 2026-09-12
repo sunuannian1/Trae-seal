@@ -792,6 +792,9 @@ final class SettingsViewModel: ObservableObject {
                 category: .account,
                 message: "Apple App ID 已同步：\(merged.usedBundleIDCount) 个可用 App ID"
             )
+        } catch is CancellationError {
+            // 任务取消不是错误：不污染失败标记，静默返回。
+            return
         } catch let failure as ImportFailure {
             certificateInventoryFailures[account.id] = failure
         } catch {
@@ -873,6 +876,9 @@ final class SettingsViewModel: ObservableObject {
                 message: failure.reason,
                 code: failure.code
             )
+        } catch is CancellationError {
+            // 任务取消不是错误：不污染证书健康状态/失败标记，静默返回。
+            return
         } catch {
             let failure = Self.failure(
                 title: "Apple 侧同步失败",

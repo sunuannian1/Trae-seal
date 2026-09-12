@@ -401,7 +401,7 @@ private func thinSigningCacheInput(_ data: Data) throws -> Data {
 
     // Reproduce ldid Allocate (ldid.cpp:1464-1473): keep the cache-key prefix
     // exactly aligned with the code limit used by the real signing pass.
-    let codeLimit = layout.adjustedCodeLimit(rawCodeLimit)
+    let codeLimit = hasExistingSignature ? layout.adjustedCodeLimit(rawCodeLimit) : rawCodeLimit
     if hasExistingSignature {
         output.removeSubrange(Int(codeLimit)..<output.count)
     } else {
@@ -1154,7 +1154,7 @@ private func signThinMachO(_ data: Data, options: MachOSigningOptions) throws ->
 
     // Reproduce ldid Allocate (ldid.cpp:1464-1473): shrink the code limit when
     // the symbol string table is adjacent to the signature region.
-    let codeLimit = layout.adjustedCodeLimit(rawCodeLimit)
+    let codeLimit = hasExistingSignature ? layout.adjustedCodeLimit(rawCodeLimit) : rawCodeLimit
     if hasExistingSignature {
         output.removeSubrange(Int(codeLimit)..<output.count)
     } else {
@@ -1293,7 +1293,7 @@ private func prepareThinMachOCMSCodeDirectories(
 
     // Reproduce ldid Allocate (ldid.cpp:1464-1473): shrink the code limit when
     // the symbol string table is adjacent to the signature region.
-    let codeLimit = layout.adjustedCodeLimit(rawCodeLimit)
+    let codeLimit = hasExistingSignature ? layout.adjustedCodeLimit(rawCodeLimit) : rawCodeLimit
     if hasExistingSignature {
         output.removeSubrange(Int(codeLimit)..<output.count)
     } else {

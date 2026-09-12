@@ -115,6 +115,40 @@
 
 ## 二、历史记录
 
+### 2026-09-12 · 签名特定 IPA 时 Seal SIGTRAP 闪退（rork-sign 符号表邻接缩限产生负数 Data count）
+- **现象**：签名/安装 SollinPlayer（Flutter + 大量 dylib，多数二进制为无 `LC_CODE_SIGNATURE`
+  的 thin arm64）时 Seal 自身崩溃。两份 `.ips`（1.0.9 build59 与 1.0.11 build64，均 iOS 18.7.8）
+  一致显示 `EXC_BREAKPOINT / SIGTRAP`，栈：`Data.init(repeating:count:) ←
+  prepareThinMachOCMSCodeDirectories(_:options:) ← MachOSigner.prepareCMSCodeDirectories ←
+  RorkSigner.signMachOWithIdentity ← BundleSigner.signCode`。
+- **根因**：`MachOSigner.swift` 三处（`thinSigningCacheInput`、finalize 分支、
+  `prepareThinMachOCMSCodeDirectories`）对「无既有 `LC_CODE_SIGNATURE`、全新追加签名」分支也套用了
+  `layout.adjustedCodeLimit(rawCodeLimit)`（ldid 符号字符串表邻接缩限）。当某二进制的 LC_SYMTAB
+  字符串表恰好落在文件末尾 16 字节内时，缩限把 `codeLimit` 压到比 `output.count` 还小，
+  `Data(repeating: 0, count: Int(codeLimit) - output.count)` 的 count 为负 → `Data.init(count:)` 陷阱死亡。
+- **修复**：三处改为 `hasExistingSignature ? layout.adjustedCodeLimit(rawCodeLimit) : rawCodeLimit`
+  ——符号表邻接缩限只作用于「已有签名」分支；全新签名分支 `codeLimit` 直接取
+  `alignUp(output.count, 16)`（≥ output.count，append 非负）。对正常二进制行为不变
+  （原本 `adjustedCodeLimit` 在非邻接时本就返回 `rawCodeLimit`）。
+- **涉及文件**：`Vendor/rork-sign/Sources/RorkSign/MachO/MachOSigner.swift`（3 处）。
+- **验证状态**：代码已改，未云编译、未真机回归。验证点：签名 SollinPlayer 不再崩溃、产物可安装。
+
+### 2026-09-12 · 证书/AppID 库存同步把任务取消误报为失败（SEAL-INVENTORY-900/900a 刷屏）
+- **现象**：添加 Apple ID / 批量签名续签时，「诊断日志」里 `SEAL-INVENTORY-900`/`900a`
+  「xxx 同步失败 [Swift.CancellationError 1]」反复刷屏，并连带污染证书健康状态。
+- **根因**：`refreshAppIDInventory` 与 `refreshCertificateInventory` 的兜底 `catch {}` 把所有异常
+  （含 `Swift.CancellationError`）都当普通错误转成 `SEAL-INVENTORY-900/900a`，并写入
+  `certificateInventoryFailures` / `certificateHealthStatuses`。当外层 Task 被取消（切团队、
+  并发刷新、页面 `.task` 重入）时，`fetchInventory` / `keychain.load` 抛 `CancellationError`，
+  被误判为「证书同步失败」。
+- **修复**：两个方法在 `catch {}` 前新增 `catch is CancellationError { return }`，取消时静默返回、
+  不写失败标记、不污染健康状态（与本文件 `authenticateAndPersistAccount` 处既有
+  `catch is CancellationError` 范式一致）。
+- **涉及文件**：`Seal/Features/Settings/SettingsViewModel.swift`（`refreshAppIDInventory`、
+  `refreshCertificateInventory`）。
+- **验证状态**：代码已改，未云编译、未真机回归。验证点：切团队 / 批量续签时日志不再出现
+  `Swift.CancellationError` 误报，证书健康状态不被污染。
+
 ### 2026-09-12 · 安装卡「正在连接设备」：内置 SealTunnel 从未激活，被迫依赖外部 LocalDevVPN 软件
 - **现象**：真机不打开外部 LocalDevVPN 软件，签名/续签后的安装环节一直卡在「正在连接设备」，
   隧道始终连不通；手动打开 LocalDevVPN 软件后才可继续。
