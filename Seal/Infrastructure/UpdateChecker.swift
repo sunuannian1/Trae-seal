@@ -6,7 +6,7 @@ import Foundation
 struct UpdateChecker {
     static let shared = UpdateChecker()
 
-    private let repo = "sunuannian1/Seal-Releases"
+    private let repo = "sunuannian1/Trae-seal"
     private let lastNotifiedVersionKey = "update_notifier.last_notified_version"
 
     /// 检查更新，返回需要展示的通知内容（无更新返回 nil）
