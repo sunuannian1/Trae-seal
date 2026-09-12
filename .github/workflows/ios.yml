@@ -83,7 +83,7 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Verify Seal minimum deployment target remains iOS 16
+      - name: Verify Seal minimum deployment target remains iOS 17
         run: |
           TARGET="$(xcodebuild \
             -project Seal.xcodeproj \
@@ -92,7 +92,7 @@ jobs:
             -sdk iphonesimulator \
             -showBuildSettings | awk -F ' = ' '/^[[:space:]]*IPHONEOS_DEPLOYMENT_TARGET = / { print $2; exit }')"
           echo "Seal IPHONEOS_DEPLOYMENT_TARGET=$TARGET"
-          test "$TARGET" = "16.0"
+          test "$TARGET" = "17.0"
           # UIDeviceFamily 改由 TARGETED_DEVICE_FAMILY 构建设置注入（消除 Info.plist 覆盖警告），断言仍为 iPhone+iPad
           FAMILY="$(xcodebuild \
             -project Seal.xcodeproj \
@@ -112,7 +112,7 @@ jobs:
             -sdk iphonesimulator \
             -showBuildSettings | awk -F ' = ' '/^[[:space:]]*IPHONEOS_DEPLOYMENT_TARGET = / { print $2; exit }')"
           echo "SealTunnel IPHONEOS_DEPLOYMENT_TARGET=$TARGET"
-          test "$TARGET" = "16.0"
+          test "$TARGET" = "17.0"
           POINT="$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' SealTunnel/Info.plist)"
           test "$POINT" = "com.apple.networkextension.packet-tunnel"
           grep -q "packet-tunnel-provider" SealTunnel/SealTunnel.entitlements

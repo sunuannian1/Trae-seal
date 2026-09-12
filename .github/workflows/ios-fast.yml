@@ -96,7 +96,7 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Verify Seal minimum deployment target remains iOS 16
+      - name: Verify Seal minimum deployment target remains iOS 17
         run: |
           TARGET="$(xcodebuild \
             -project Seal.xcodeproj \
@@ -105,7 +105,7 @@ jobs:
             -sdk iphonesimulator \
             -showBuildSettings | awk -F ' = ' '/^[[:space:]]*IPHONEOS_DEPLOYMENT_TARGET = / { print $2; exit }')"
           echo "Seal IPHONEOS_DEPLOYMENT_TARGET=$TARGET"
-          test "$TARGET" = "16.0"
+          test "$TARGET" = "17.0"
 
       - name: Verify SealTunnel target and Packet Tunnel configuration
         run: |
@@ -116,7 +116,7 @@ jobs:
             -sdk iphonesimulator \
             -showBuildSettings | awk -F ' = ' '/^[[:space:]]*IPHONEOS_DEPLOYMENT_TARGET = / { print $2; exit }')"
           echo "SealTunnel IPHONEOS_DEPLOYMENT_TARGET=$TARGET"
-          test "$TARGET" = "16.0"
+          test "$TARGET" = "17.0"
           POINT="$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' SealTunnel/Info.plist)"
           test "$POINT" = "com.apple.networkextension.packet-tunnel"
           grep -q "packet-tunnel-provider" SealTunnel/SealTunnel.entitlements
