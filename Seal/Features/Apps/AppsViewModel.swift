@@ -746,7 +746,7 @@ final class AppsViewModel: ObservableObject {
         let isRenewal = app.belongsInInstalledList
         // 宽松策略：续签时优先用应用记录的账号，没有则用传入的账号
         let resolvedAccountID = (isRenewal ? app.accountID : nil) ?? accountID
-        guard let account = verifiedAccounts.first(where: { $0.id == resolvedAccountID }) else {
+        guard var account = verifiedAccounts.first(where: { $0.id == resolvedAccountID }) else {
             alertFailure = ImportFailure(
                 title: "Apple ID 不可用",
                 reason: isRenewal ? "请选择一个已验证的 Apple ID 进行续签。" : "请选择一个已验证的 Apple ID",
@@ -754,6 +754,33 @@ final class AppsViewModel: ObservableObject {
                 code: "SEAL-AUTH-104b"
             )
             return
+        }
+
+        // Seal 覆盖安装自己（内部更新/自续签）的签名身份 = TeamID + Bundle ID；Bundle ID 由
+        // isSeal 分支保留，但 TeamID 取决于所选账号。若 Team 变化，iOS 判为全新应用，清空本地
+        // 容器（Accounts.json / Seal.sqlite）并使 Keychain 访问组失配 —— 即「更新后 Apple ID
+        // 失效需重新添加」。这里按当前运行 Seal 的真实签名 Team 纠正账号，保住身份；只有找不到
+        // 同 Team 账号（如首次从他人账号切到自己账号）才允许切换并提示会重置本地数据。
+        if app.isSeal,
+           let currentSealTeam = SelfAppMetadata.current()?.signingTeamIdentifier,
+           currentSealTeam.isEmpty == false,
+           account.teamID.caseInsensitiveCompare(currentSealTeam) != .orderedSame {
+            if let sameTeamAccount = verifiedAccounts.first(where: {
+                $0.teamID.caseInsensitiveCompare(currentSealTeam) == .orderedSame
+            }) {
+                account = sameTeamAccount
+                try? await logStore?.append(
+                    category: .signing,
+                    message: "Seal 自更新沿用同 Team 账号 \(sameTeamAccount.maskedEmail)，避免更新后 Apple ID 失效"
+                )
+            } else {
+                alertFailure = ImportFailure(
+                    title: "更新将重置本地数据",
+                    reason: "当前 Seal 由另一 Team 签名，改用所选 Apple ID 覆盖安装会清空已添加的 Apple ID 与已安装应用，需重新添加。",
+                    recovery: "知道了",
+                    code: "SEAL-AUTH-105c"
+                )
+            }
         }
 
         if isRenewal == false {

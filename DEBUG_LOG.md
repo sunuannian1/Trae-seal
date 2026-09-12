@@ -115,6 +115,26 @@
 
 ## 二、历史记录
 
+### 2026-09-12 · Seal 内部更新后 Apple ID 失效需重新添加（覆盖安装签名 Team 变化 → iOS 判为新应用清空数据）
+- **现象**：通过 Seal 内部更新（自更新 / 自续签）升级到新版本后，打开新版时已添加的 Apple ID 全部失效，
+  需重新添加；已安装应用列表也一起丢失。
+- **根因**：Seal 覆盖安装自己时，签名身份 = `application-identifier` = `TeamID + Bundle ID`。Bundle ID
+  在自更新路径里由 `isSeal` 分支复用保留（`SelfAppRegistrar` / `BundleIDPolicy.targetBundleIdentifier`），
+  但 **TeamID 取决于用哪个 Apple ID 签这次更新**。一旦 Team 变化，iOS 把覆盖安装判成全新应用：
+  全新空容器（`Accounts.json`、`Seal.sqlite` 清空）+ Keychain 访问组失配（凭据读不到）→
+  表现为「Apple ID 失效、需重新添加」。而 `beginSigning` 里 `resolvedAccountID =
+  (isRenewal ? app.accountID : nil) ?? accountID` 依赖**落库的 `app.accountID`**，它一旦过期/为空
+  就退回用抽屉所选账号，可能选到不同 Team 的账号触发数据清空。
+- **修复**：`AppsViewModel.beginSigning` 对 `app.isSeal` 增加基于**当前运行 Seal 的真实签名 Team**
+  （`SelfAppMetadata.current().signingTeamIdentifier`，读 embedded.mobileprovision）的账号纠正：
+  优先改用同 Team 账号保住签名身份（并记日志）；只有找不到同 Team 账号（如首次从他人账号切到自己账号）
+  才允许切换，并弹「更新将重置本地数据」提示（`SEAL-AUTH-105c`）。免费账号无 App Group，
+  跨 Team 无任何可持久化路径（容器与 Keychain 访问组都随 Team 变），故只能「保身份 + 提示」，
+  无法做到跨 Team 无损迁移。
+- **涉及文件**：`Seal/Features/Apps/AppsViewModel.swift`（`beginSigning`）。
+- **验证状态**：代码已改，未云编译、未真机回归。验证点：用同一 Apple ID 自更新后 Apple ID 列表、
+  已安装应用完好；换用不同 Team 账号时出现「更新将重置本地数据」提示。
+
 ### 2026-09-12 · 签名特定 IPA 时 Seal SIGTRAP 闪退（rork-sign 符号表邻接缩限产生负数 Data count）
 - **现象**：签名/安装 SollinPlayer（Flutter + 大量 dylib，多数二进制为无 `LC_CODE_SIGNATURE`
   的 thin arm64）时 Seal 自身崩溃。两份 `.ips`（1.0.9 build59 与 1.0.11 build64，均 iOS 18.7.8）
