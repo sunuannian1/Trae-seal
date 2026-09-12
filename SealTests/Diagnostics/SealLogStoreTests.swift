@@ -38,6 +38,7 @@ struct SealLogStoreTests {
             category: .account,
             message: "Apple ID demo@icloud.com Team ID: ABCDEFGHIJ Serial: 1234567890ABCDEF UDID: 000081100012345678901234 UUID: \(uuid) Authorization: Bearer-secret Cookie: session-secret JWT: \(jwt)"
         )
+        await store.flush()
 
         let storedText = String(decoding: try Data(contentsOf: fileURL), as: UTF8.self)
         #expect(storedText.contains("demo@icloud.com") == false)

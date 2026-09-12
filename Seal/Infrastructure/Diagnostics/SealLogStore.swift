@@ -101,6 +101,11 @@ actor SealLogStore {
 
     private func performFlush() {
         pendingFlush = false
+        flush()
+    }
+
+    /// 立即把内存缓冲落盘（供测试及需要即时持久的场景；日常 append 仍走节流批量落盘）
+    func flush() {
         persist(buffer)
         if pendingMirror {
             pendingMirror = false
