@@ -152,7 +152,8 @@ Lockdown 文件照样会卡住。所以做了一次全仓审计（2026-09-20）�
 |---|---|
 | 7 个依赖的最低平台 | Minimuxer **13**；AltSign / CodeSignKit / GSACryptoKit / libdeflate **14**；AnisetteKit / SideSign **15** ⇒ **无一要求 17** ✓ |
 | 主代码 iOS 17+ 专属 API | `@Observable` / `import Observation` / SwiftData / `symbolEffect` / `scrollTargetBehavior` / `scrollPosition` / `containerRelativeFrame` / `ContentUnavailableView` / `PhaseAnimator` / `KeyframeAnimator` / `sensoryFeedback` / `geometryGroup` / `visualEffect` / `scrollBounceBehavior` / TipKit / `onGeometryChange` / `defaultScrollAnchor` ⇒ **全部 0 命中** ✓ |
-| 仅剩两处 | ① `GlassSurface.swift:19` 的 `.glassEffect` **已在 `#available(iOS 26.0, *)` 内** ✓ 安全；② `onChange(of:)` 的**双参数闭包写法**（iOS 17 才有的重载）⇒ **已改为单参数**（见 §8.5）|
+| 未加门且属 iOS 17+ 的写法 | `onChange(of:)` 的**双参数闭包**（iOS 17 才有的重载）⇒ **已改单参数**（见 §8.5）✓。⚠️ **判据：未加 `#available` 的 iOS 17+ API 在部署目标 16.0 下是编译错误** ⇒ **编译器本身就是这道闸门**，不必再写守卫 ✓ |
+| 全部 `#available` 站点（`Seal/` ＋ `Vendor/` 共 **4 处**，2026-09-21 逐处核对） | ① `GlassSurface.swift:17` `iOS 26.0` → `.glassEffect`，else 回退 `Color.sealSurface` ✓；②③ `GlassSurface.swift:58/67` `iOS 16.4` → `presentationBackground(.clear)` / `presentationCornerRadius(28)`，else 返回 `self` ⇒ ⚠️ **iOS 16.0–16.3 上 sheet/抽屉退回系统默认背景与圆角（纯视觉、不崩）**；④ `Minimuxer.swift:91` `iOS 26.4` → 只 `print` 一条「VPN 子网未打补丁」警告，跳过即正确 ✓ |
 | 外部依赖 | 上游 **SideStore README 明写 iOS 14+**（xcodeproj 15.0）—— Seal 的安装链路来源；**LocalDevVPN 要求 iOS 14.0+**（官方 README）⇒ 都覆盖 iOS 16 ✓ |
 
 ⇒ **「装不上 iOS 16」纯粹是 9 处声明（`Config/Base.xcconfig` 1 处 ＋ `project.yml` 5 处

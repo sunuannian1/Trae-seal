@@ -7,6 +7,22 @@
 
 ## 常犯坑位
 
+- 🔴 **「降部署目标」后要审的是 `#available` 的 else 分支，不是「有没有更高版本的 API」**（2026-09-21）。
+  **部署目标本身就是编译期闸门**：未加 `#available` 的 iOS 17+ API，在部署目标 16.0 下**直接编译报错**
+  ⇒ 「调了不存在的 API」这一类**编译器已经帮你挡了** ✗。**编译器挡不住的是另一类**：
+  代码已经**正确地**写成 `if #available(iOS 16.4, *) { 新写法 } else { self }`
+  ⇒ 编译通过、守卫全绿，但在 **16.0–16.3** 上**静默走 else**、行为与 16.4+ 不同 ✗✗。
+  - **判据**：降（或升）部署目标时，**逐个数出全仓 `#available` 站点、并读出 else 分支做什么** ✓
+    —— 不是 `grep` 一下「有没有 17 的 API」就收工。
+  - **本次实况**：全仓（`Seal/` ＋ `Vendor/`）**只有 4 处** `#available` ⇒ 3 处在 `GlassSurface.swift`
+    （`iOS 26.0` 玻璃效果 → 回退纯色 ✓；`iOS 16.4` ×2 的 `presentationBackground` /
+    `presentationCornerRadius` → ⚠️ **16.0–16.3 上 sheet/抽屉退回系统默认背景与圆角**，纯视觉），
+    1 处在 `Minimuxer.swift:91`（`iOS 26.4` → 只 `print` 警告 ✓）。
+  - **连带**：这类差异**必须写进验收判据** —— 否则测试者看到 16.0–16.3 上弹层圆角不对，
+    会当成失败报回来 ✗（已写进回归清单 ★16.x 段与交付包《操作单》）。
+  - 同族：**「能编译」≠「行为正确」** —— 编译期闸门只覆盖「符号可用性」，
+    覆盖不了「同一符号在不同系统版本上的语义差异」。
+
 - 🔴 **「钉住了分支标志」≠「钉住了用户可见文案」—— 判据载体选错层，验收判据会静默失效**（2026-09-21）。
   实例：配对助手的「按设备版本分流」有两个载体 —— ① 分支标志 `seal_lockdown_only`（决定那句提示
   显不显示）；② 卡片上那句**用户可见文案**「iOS 17.4 以下：本机配对（Lockdown）」。
@@ -537,6 +553,45 @@
 ---
 
 ## 历史记录
+
+### 2026-09-21 · 降部署目标后的 `#available` 语义审计：全仓 4 处逐处核对
+
+**动机**：上一轮只确认了「iOS 17+ 专属 API 0 命中」与「`onChange(of:)` 已改单参数」，
+**没有逐处读 `#available` 的 else 分支**。部署目标降到 16.0 后，16.0–16.3 与 16.4–16.7.10
+落在**不同分支**上 ⇒ 这是**编译器挡不住**的一类差异（理由见「常犯坑位」新增那条）。
+
+**方法**：`git grep -n "#available" <远端SHA> -- Seal/ Vendor/` ⇒ 全仓 **4 处**，逐处读上下文。
+
+| # | 位置 | 门槛 | else 分支 | 结论 |
+|---|---|---|---|---|
+| 1 | `GlassSurface.swift:17` | iOS 26.0 | `.glassEffect` → `Color.sealSurface` 纯色背景 | ✅ 安全 |
+| 2 | `GlassSurface.swift:58` | iOS 16.4 | `presentationBackground(.clear)` → 返回 `self` | ⚠️ 16.0–16.3 上弹层背景不透明 |
+| 3 | `GlassSurface.swift:67` | iOS 16.4 | `presentationCornerRadius(28)` → 返回 `self` | ⚠️ 16.0–16.3 上弹层圆角为系统默认 |
+| 4 | `Minimuxer.swift:91` | iOS 26.4 | 跳过 `vpnPatched()`（仅 `print` 一条警告） | ✅ 安全（该检查本就只针对 26.4+） |
+
+⇒ **没有一处在 iOS 16 上会崩或走错分支** ✓；但 2/3 让 **16.0–16.3 的弹层外观与 16.4+ 不同**，
+**必须写进验收判据**（否则测试者会报成失败 ✗）。
+
+**顺带核实的关键路径**：`IfaceScanner.getPeer(for:)` **不是**从 `getifaddrs` 的 utun 对端推 IP，
+而是取 `cachedOverrideFakeIP` 并用 `Minimuxer.testDeviceConnection` 探活 ⇒ **完全版本无关** ✓
+（设备 IP 由 `IfaceScanner.refresh()` 的 `setDeviceIP(vpnIface?.hostIP)` 提供 = utun 的 host 地址，
+与既有回归清单的描述一致 ✓）。
+
+**处置：不改代码，只改文档** ——
+① 改 `Seal/**` 会让源码与**已交付的构建 196** 不再对应（用户马上要用它做真机测试）⇒ **有意不动**；
+② `presentationBackground` 在 16.0–16.3 上**没有干净替代**（`UITableView.appearance()` 那类全局 hack
+影响面更大、且违反最小改动）⇒ 不值得为纯视觉引入风险。
+⇒ 把「**16.0–16.3 弹层圆角/背景与 16.4+ 不同，是预期差异、别报成 bug**」写进
+回归清单 ★16.x 段 ＋ 交付包《操作单》判据速查段 ✓。
+
+**涉及文件**：`docs/qa/device-regression-checklist.md`、`docs/qa/2026-09-20-pairing-os-support-matrix.md`
+（§8.3 的「**仅剩两处**」补全为 **4 处逐处清单**）、`DEBUG_LOG.md`；
+仓库外：`Seal-构建196/真机验证操作单.md`（**不改变 IPA / exe 的 sha256**）。
+
+**验证状态**：本轮**只改文档** —— `docs/**` 与 `DEBUG_LOG.md` 都不在 `ios.yml` 的 `push.paths`
+⇒ **不触发 CI、不动产物** ✓；守卫无新增判据（`#available` 的语义差异不是机械不变量，
+用文档 ＋ 验收判据承载比写成守卫更合适）。
+⚠️ **iOS 16 真机验收仍是唯一有效验收**。
 
 ### 2026-09-21 · 面向用户的版本表述最终扫描（iOS 16）
 

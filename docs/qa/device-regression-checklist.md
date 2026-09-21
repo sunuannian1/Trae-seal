@@ -531,6 +531,14 @@ Apple 已经接受了密码，只是要求走第二步（输验证码）。这�
 **失败判据**：任何一步失败，**导出 Seal 日志**（文件 App → 我的 iPhone → Seal → `Seal-log.txt`）
 并**注明构建号**（日志表头第二行）—— 无构建号的日志不代表当前代码。
 
+> ⚠️ **iOS 16.0–16.3 有一个「预期中的视觉差异」，别报成失败**（2026-09-21 逐行核对）：
+> `GlassSurface.swift:58/67` 的 `presentationBackground(.clear)` 与 `presentationCornerRadius(28)`
+> 都是 **iOS 16.4+** API ⇒ 在 **16.0–16.3** 上被 `#available` 挡掉、直接返回 `self`
+> ⇒ **sheet / 抽屉退回系统默认背景与圆角**（16.4+ 才是自定义圆角 ＋ 透明背景）。
+> **功能完全不受影响**（`.presentationDetents` / `.presentationDragIndicator` 是 16.0+ ✓ 仍生效）
+> ⇒ 验收时**不要把「圆角不对 / 背景不透明」记成失败** ✓。
+> 全仓 `#available` 只有 **4 处**，逐处结论见 `2026-09-20-pairing-os-support-matrix.md` §8.3。
+
 > 🔴 **iOS 16 的 Lockdown 通道从未跑过真机** ⇒ 本项是**第一次**验证它。
 > 构建 190 验的是 iOS 17.0–17.3.1，**不能替 iOS 16 背书**
 > （详见 `2026-09-20-pairing-os-support-matrix.md` §8.6）。
