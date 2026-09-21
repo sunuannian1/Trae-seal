@@ -7,6 +7,33 @@
 
 ## 常犯坑位
 
+- 🔴 **「钉住了分支标志」≠「钉住了用户可见文案」—— 判据载体选错层，验收判据会静默失效**（2026-09-21）。
+  实例：配对助手的「按设备版本分流」有两个载体 —— ① 分支标志 `seal_lockdown_only`（决定那句提示
+  显不显示）；② 卡片上那句**用户可见文案**「iOS 17.4 以下：本机配对（Lockdown）」。
+  `patch_upstream.py` 的 `verify()` 与 `.github/workflows/pairing-assistant.yml` 的 `required`
+  **两道闸门都只钉了 ①** ✗，而《真机验证操作单》第 4 步与回归清单第 15 项的验收判据是 **②**
+  ⇒ 文案被改掉时标志仍在，**没有任何一道门会红**，操作单上的判据却已经失效 ✗。
+  - **判据**：给「用户可见验收判据」找载体时，钉**用户能看见的那个字符串本身**，
+    不要只钉「控制它显示与否的内部变量」✓ —— 同族的 `✦  生成并写入 Seal`、`已写入 Seal`、
+    `未连接 iPhone` 就是按这个标准钉的 ✓。
+  - ⚠️ **钉在哪里也有讲究**：`pairing-assistant.yml` 的 `on.push.branches` 只有 `main` / `feature/**`
+    ⇒ 在 `fix/**` 上**不会自动跑** ⇒ 钉进**守卫**（本分支唯一会自动跑的那道）才有意义 ✓。
+    守卫 **R69** 已由 2 条扩到 3 条（2 条 Rust 单测标记 ＋ 1 条卡片文案）＋ 1 个变异锚点。
+  - 同族：本仓那条「『注释写着对齐上游』不等于真的对齐」（`SinfOptions` 那次）。
+
+- 🔴 **审计/扫描必须在「正确的分支或提交」上做 —— 主工作区可能属于另一个并行会话**（2026-09-21）。
+  实例：本仓主工作区（`…\Desktop\Seal`）当时停在**另一条分支** `ui/signing-progress-track`
+  （并行会话的签名/DRM 工作流），而本轮 iOS 16 的改动在 `fix/signing-attribution-batch0` 上、
+  且是在 `git worktree` 隔离副本里做的 ⇒ 直接在主工作区 `grep` 扫「iOS 17 残留」，会看到
+  `AboutView` 仍是「iOS 17.0」、`PairingSettingsView` 仍写「iOS 16 及以下无法安装 Seal」
+  ⇒ 差点得出「**已推送的修复丢了 / 被 OneDrive 静默回滚**」这个**错误结论** ✗。
+  - **判据**：审计前先确认真实来源 —— `git rev-parse --abbrev-ref HEAD`（主工作区在哪个分支）
+    ＋ `git ls-remote origin <branch>`（远端尖端是哪个 SHA），然后
+    **`git grep <pattern> <远端SHA>` 直接对提交对象扫描** ✓。
+  - ⚠️ **绝不把「工作区文件内容」当作「已推送内容」的证据** —— 两者可能属于不同分支/会话 ✗。
+  - 与 MEMORY.md 里「工作区可能被别的进程并发改写」是同一类风险的两个面：
+    那条讲**写入**（别 `git add -A`），这条讲**读取**（别把工作区当远端）✓。
+
 - 🔴 **「文档写着已覆盖 ✅」≠「代码真的做了」—— 能力表尤其危险**（2026-09-21）。
   实例：`docs/qa/2026-09-18-signing-coverage-gap-report.md` 的能力表里，
   「加密二进制（App Store FairPlay）」一行写着「**导入时就拦**」并标 ✅，
@@ -510,6 +537,45 @@
 ---
 
 ## 历史记录
+
+### 2026-09-21 · 面向用户的版本表述最终扫描（iOS 16）
+
+**动机**：最低支持版本降到 iOS 16 之后，凡**仍在陈述现状**的版本文案都必须跟着改 ——
+否则 iOS 16 的用户会读到「iOS 16 及以下无法安装 Seal」这类**与事实相反**的提示。
+
+**扫描方法（关键）**：直接对**远端提交对象**扫，不对工作区文件扫：
+`git grep -n "iOS 17\|17\.0\|17\.3\.1" <远端SHA> -- . ':!upstream' ':!Vendor' ':!build'`
+—— 理由见「常犯坑位」里那条「审计必须在正确的分支或提交上做」（主工作区当时在**另一条分支**）。
+
+**结论：区分「历史记录」与「仍在陈述现状」两类，只改后者**
+
+| 位置 | 原文 | 处置 |
+|---|---|---|
+| `Tools/SealPairingAssistant/README.md:13` | 「**iOS 17.0–17.3.1** ⇒ 本机配对（Lockdown）」 | 🔴 改「**iOS 17.3.1 及以下（含 iOS 16）**」＋补「分界是 17.4 不是 17.0」「助手**不拒绝任何版本**，下限 = Seal 部署目标 16.0」 |
+| `Tools/SealPairingAssistant/seal_ui_tail.rs.txt:70` | 注释「17.0–17.3.1 必须生成 Lockdown 文件」 | 🔴 改「17.3.1 及以下（含 iOS 16）」 |
+| `docs/qa/2026-09-20-pairing-os-support-matrix.md` §5 第 1、2 条 | 「**Seal 自己的部署目标是 iOS 17.0**（`project.yml` **5 处**）⇒ iOS 16.x 及以下无法安装」 | 🔴 **已过期**（现为 16.0 / **9 处**）⇒ 划改 ＋ 指向 §8.5，并标「iOS 16 真机未验 ⇒ §8.6」 |
+| `RELEASE_NOTES.md:1,5` | 标题与正文的「iOS 17.0–17.3.1」 | 🟡 收紧为「iOS 17.3.1 及以下（含 iOS 16）」—— 发布弹窗是**用户直接读**的 |
+| `docs/qa/device-regression-checklist.md` 第 15 项 | 步骤写「拿一台 **iOS 17.0–17.3.1** 的 iPhone」 | 🟡 补「iOS 16.0–16.7.x 同样适用」＋注明那句文案已被守卫 **R69** 钉住 |
+| `Seal/**`（4 处注释/文案） | —— | ✅ 上一轮 `ab60281` 已改完，本轮复核**无残留** ✓ |
+| `DEBUG_LOG.md` 历史条目、`docs/qa/2026-09-20-seal-175-…` | —— | ✅ **刻意不改** —— 那是「当时的状态」的记录，改了反而失去复盘价值 ✓ |
+
+**助手卡片那句文案：不改** —— `"iOS 17.4 以下：本机配对（Lockdown）"` 对 iOS 16
+**本来就是正确表述**（16 < 17.4 ⇒ 走 Lockdown ✓），且卡片左侧已显示真实版本
+（`format!("iOS {ios_version}")`）⇒ 用户看到「iOS 16.0 ● 已就绪 ／ iOS 17.4 以下：本机配对（Lockdown）」
+语义正确 ✓。
+
+**加固**：把上面那句**用户可见文案**钉进守卫 **R69**（原来两道助手闸门只钉了分支标志
+`seal_lockdown_only`）＋ 1 个变异锚点（把文案改成「iOS 17 及以下」⇒ 报 `R69:`）✓。
+读的是 `Tools/SealPairingAssistant/seal_ui_tail.rs.txt`（纯文本、不进 Swift 编译面）；
+`load_cached` 按遍缓存 ⇒ 200+ 遍变异轮次**零额外磁盘读** ✓。
+
+**涉及文件**：`Tools/SealPairingAssistant/README.md`、`Tools/SealPairingAssistant/seal_ui_tail.rs.txt`、
+`RELEASE_NOTES.md`、`docs/qa/2026-09-20-pairing-os-support-matrix.md`、
+`docs/qa/device-regression-checklist.md`、`Scripts/verify-release-safety.py`、`DEBUG_LOG.md`
+
+**验证状态**：✅ 守卫 **PASS 488/253**（原 487/252 ⇒ ＋1 条检查、＋1 个变异锚点，条数自洽）；
+⏳ CI 待跑。⚠️ **iOS 16 真机验收仍是唯一有效验收** —— 本轮全部是文案/判据改动，
+**不改任何运行行为**。
 
 ### 2026-09-21 · 最低支持版本回到 iOS 16：**这条限制当初是人为加上去的，而理由已过期**
 

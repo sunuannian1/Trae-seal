@@ -67,7 +67,7 @@
         let seal_failed = matches!(seal_install_result, Some(Some(Err(_))));
         let is_processing = self.pending_seal_install || seal_installing;
         let has_device = selected_device.is_some();
-        // 17.0–17.3.1 必须生成 Lockdown 文件；版本未知时若沿用上游默认的
+        // 17.3.1 及以下（含 iOS 16）必须生成 Lockdown 文件；版本未知时若沿用上游默认的
         // RemotePairing，会制造一个该系统根本无法使用的文件。因此先读到系统版本再允许生成。
         let has_ios_version = ios_version != "—";
         let can_primary_action = has_device && has_ios_version && !is_processing;

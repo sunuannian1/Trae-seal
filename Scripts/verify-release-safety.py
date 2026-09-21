@@ -3584,6 +3584,23 @@ def violations(load=read):
               + marker + "`）—— 只留 `patch_upstream.py` 那一道就是自洽判据，"
               "实现与判据一起被改掉照样绿")
 
+    # R69（续）: 助手卡片上那句**用户可见**的版本分流提示也必须钉住（2026-09-21）。
+    #
+    # 它是 `docs/qa/device-regression-checklist.md` 第 15 项与《真机验证操作单》第 4 步的
+    # 验收判据 —— 用户要**肉眼看到这一行**才算「版本分流生效」✓。
+    # ⚠️ 只钉 `seal_lockdown_only`（分支标志）**不够**：文案被改掉时标志仍在、
+    # 操作单上的判据却已失效，而且**没有任何一道门会红** ✗。
+    # ⚠️ 为什么钉在守卫里、而不是再加到助手那两道闸门：本分支（`fix/**`）上
+    # `pairing-assistant.yml` 不会自动跑（`on.push.branches` 只有 `main` / `feature/**`）
+    # ⇒ **守卫是唯一会自动跑的那道** ✓（理由同上面 R69）。
+    #
+    # ⚠️ 文案本身**对 iOS 16 是正确的**（16 < 17.4 ⇒ Lockdown ✓）⇒ 这里守的是
+    # 「别把这句话改跑」，不是「16 要显示另一句话」。
+    lockdown_hint = "iOS 17.4 以下：本机配对（Lockdown）"
+    check(lockdown_hint in load("Tools/SealPairingAssistant/seal_ui_tail.rs.txt"),
+          "R69: 助手卡片必须保留版本分流提示 `" + lockdown_hint + "` ✗ —— "
+          "它是真机验证操作单第 4 步的验收判据，对 iOS 16 同样成立（16 < 17.4 ⇒ Lockdown）")
+
     handoff_failures = HANDOFF_GUARD["violations"](load)
     checks += 6
     failures.extend(handoff_failures)
@@ -5177,6 +5194,12 @@ def main():
         (".github/workflows/pairing-assistant.yml",
          "            'seal_ios_supports_remote_pairing(\"16.0\")',\n",
          "",
+         "R69:"),
+        # R69（续）: 把助手卡片那句版本分流提示改掉 ⇒ 操作单第 4 步的验收判据**悄悄失效**
+        # （分支标志 `seal_lockdown_only` 还在，单看标志会以为没事）✓ 报红。
+        ("Tools/SealPairingAssistant/seal_ui_tail.rs.txt",
+         "\"iOS 17.4 以下：本机配对（Lockdown）\"",
+         "\"iOS 17 及以下：本机配对（Lockdown）\"",
          "R69:"),
         # R68（CI 断言那条新路径）：把 `ios.yml` 的部署目标断言改回 17.0 ⇒ 原样重演
         # 2026-09-21 那次 `build-package` 在 `Verify deployment targets` 步骤红 ✓。

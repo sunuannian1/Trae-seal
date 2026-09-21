@@ -49,16 +49,19 @@ iOS 17.0–17.3.1 上没有它，userspace 隧道只能经 Wi-Fi/bonjour 走 Rem
 
 ## 五、对 Seal 意味着什么
 
-1. **Seal 自己的部署目标是 iOS 17.0**（`project.yml` **5 处**：`options` 全局 ＋
-   `Seal` / `DeviceSupport` / `SealTests` / `SealUITests` 四个 target）
-   ⇒ **iOS 16.x 及以下无法安装 Seal**，与配对方式无关。
-   ⚠️ 但**这只是声明，不是技术依赖** —— 门槛有多低见 **§8**。
-2. **iOS 17.0–17.3.1**：Seal 能跑，但**只能走 Lockdown（本机配对）**。minimuxer 里这条链路是完整的
+1. **Seal 自己的部署目标是 ~~iOS 17.0~~ ⇒ iOS 16.0**（✅ **2026-09-21 下调**；**9 处**声明 =
+   `Config/Base.xcconfig` ＋ `project.yml` 5 处 ＋ 三份 workflow 的 CI 断言各 1 处，明细见 **§8.5**）
+   ⇒ **iOS 16.0 及以上可安装 Seal**，与配对方式无关。
+   ⚠️ 当初的 17.0 门槛**只是声明，不是技术依赖**（`9fed6f3` 提升时的理由已被 `6d990e4`
+   补齐的 Lockdown 安装链路推翻）—— 依据见 **§8**；⚠️ 但 **iOS 16 的真机验收仍未做**（见 §8.6）。
+2. **iOS 16.0–17.3.1**：Seal 能跑，但**只能走 Lockdown（本机配对）**。minimuxer 里这条链路是完整的
    （`Muxer.start` 按 `UDID` / `private_key` 分流；`LockDownInstall` 的 AFC 暂存 + instproxy 安装）。
-   **配对助手自 run#185 起会按设备版本自动选**（`seal_mode_for_ios`）。
-   ✅ **2026-09-21 真机验证通过 —— 全流程通**（**构建 190**）：助手写入配对文件 → Seal 导入 →
+   **配对助手自 run#185 起会按设备版本自动选**（`seal_mode_for_ios`；⚠️ 分界是 **17.4**，不是 17.0）。
+   ✅ **17.0–17.3.1 已真机验证通过 —— 全流程通**（**构建 190**）：助手写入配对文件 → Seal 导入 →
    通道验证 → 装 App → 点开 → **续签（含批量）全部走通** ✓
    ⇒ 见 `device-regression-checklist.md` 第 15 项（已结案）。
+   🟡 **iOS 16.0–16.7.x 走同一条路，但尚未真机验收**（见 §8.6）—— 助手对 16.x 同样生成
+   Lockdown 文件（`seal_ios_supports_remote_pairing("16.0") == false` ✓，守卫 **R69** 钉住）。
 3. **iOS 17.4 及以上**：远程配对，助手按原样生成 RPPairing 文件。
 
 ## 六、怎么复核（结论过期时照这个来）
