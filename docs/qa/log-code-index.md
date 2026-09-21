@@ -37,6 +37,12 @@
 | `SEAL-APPID-303` | App ID 创建失败（Apple 未创建；常见原因见同行的 `Apple 返回：`） | `ApplePortalSigningService.swift` |
 | `SEAL-EXT-401` | **扩展**无法创建 App ID（多扩展 App 会走到这条） | `ApplePortalSigningService.swift` |
 
+## 导入 / IPA 校验
+
+| 码 | 它在说什么 | 出处 |
+|---|---|---|
+| `SEAL-IPA-107` | **IPA 未砸壳**（主二进制 `cryptid != 0`，App Store 加密版）：重签能装上，但解密密钥与原签名绑定 ⇒ 启动会立即闪退。需先用砸壳工具重新导出 | `IPAParserService.swift` |
+
 ## 安装 / 设备通道
 
 | 码 | 它在说什么 | 出处 |

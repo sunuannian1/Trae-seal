@@ -3459,8 +3459,33 @@ def violations(load=read):
           "R66: sinf 分支必须带专属码 `SEAL-INSTALL-702f` ✗ —— "
           "并在 `InstallFailureActionPolicy.acknowledgeCodes` 里登记为「不重试」")
 
+    # R67: 「未砸壳的加密 IPA」必须在**导入期**拒绝，不许降级成一条可忽略的警告（2026-09-21）。
+    #
+    # 闭环链条：`cryptid != 0`（App Store 加密版）⇒ 重签会换掉整个签名，而 FairPlay 的
+    # 解密密钥与原签名绑定 ⇒ 装上了也**启动即闪退**（`set_code_unprotect() error 7`）。
+    # 让用户走完「导入 → 签名 → 安装 → 闪退」再回头找原因，等于白折腾一轮真机 ✗ ——
+    # 与安装侧那条「确定性拒绝必须立即终止」（R66）同源。
+    #
+    # ⚠️ 此前的实现**只 `warnings.append`**，而
+    # `docs/qa/2026-09-18-signing-coverage-gap-report.md` 里却写着「**导入时就拦**」
+    # ⇒ **文档与代码不符** ✗。本次让代码追上文档。
+    # ⚠️ 删警告时的陷阱：只删 `if` 而留着那句 `warnings.append`（或反之）会留下
+    # **永远不会触发的死警告** ＝ 又一处「代码在、行为不在」✗ ⇒ 必须整段移除并钉住。
+    import_service = strip_comments(load("Seal/Core/Import/IPAParserService.swift"))
+    check('code: "SEAL-IPA-107"' in import_service,
+          "R67: 未砸壳的加密 IPA 必须在导入期拒绝并带专属码 `SEAL-IPA-107` ✗ —— "
+          "只发警告会让用户走完签名 → 安装 → 闪退")
+    check('title: "IPA 未砸壳（App Store 加密版）"' in import_service,
+          "R67: 拒绝文案必须点明「未砸壳」✗ —— 用户要知道下一步是砸壳，而不是换个包再试")
+    check("主二进制已加密（App Store 版本），需要砸壳后才能签名" not in import_service,
+          "R67: `detectImportWarnings` 里那条加密警告必须删掉 ✗ —— 拒绝路径已经拦下，"
+          "留着它就是**永远不会触发的死警告**（又一处「代码在、行为不在」）")
+    check(import_service.count("isEncryptedBinary(appRoot:") == 1,
+          "R67: `isEncryptedBinary` 只应保留**拒绝路径**这一个调用点 ✗ —— "
+          "多处调用会让「拦不拦」取决于哪一处先跑")
+
     handoff_failures = HANDOFF_GUARD["violations"](load)
-    checks += 14
+    checks += 6
     failures.extend(handoff_failures)
     return checks, failures
 
@@ -3692,6 +3717,20 @@ def main():
          "Sacrifice: affected installed apps must be re-signed after the retry succeeds"),
     ]
     mutations += [
+        # R67: 换掉专属码 ⇒ 导入期的拒绝失去可检索标识（用户/日志都对不上号）✓ 报红。
+        ("Seal/Core/Import/IPAParserService.swift",
+         '                code: "SEAL-IPA-107"\n            )',
+         '                code: "SEAL-IPA-999"\n            )',
+         "R67: 未砸壳的加密 IPA 必须在导入期拒绝并带专属码"),
+        # R67: 把那条死警告加回 `detectImportWarnings` ⇒ 拒绝路径之外又留一份「看着在管、
+        #      其实永远不会触发」的代码，「代码在、行为不在」重演 ✓ 报红。
+        ("Seal/Core/Import/IPAParserService.swift",
+         "        // 检测 Watch app（免费账号不支持）",
+         "        if isEncryptedBinary(appRoot: appRoot, entries: entries, archive: archive) {\n"
+         "            warnings.append(\"主二进制已加密（App Store 版本），需要砸壳后才能签名\")\n"
+         "        }\n"
+         "        // 检测 Watch app（免费账号不支持）",
+         "R67: `detectImportWarnings` 里那条加密警告必须删掉"),
         # R65: 把「递归删所有 SC_Info」退回「只删 app 根目录那一个」——
         # 嵌套 bundle（Frameworks/PlugIns）里的 SC_Info 会留下来，真机上仍然装不上。
         ("Seal/Infrastructure/Signing/SigningWorkspace.swift",

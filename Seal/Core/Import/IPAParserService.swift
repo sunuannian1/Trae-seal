@@ -130,6 +130,29 @@ struct IPAParserService: Sendable {
             entries: entries,
             archive: archive
         )
+        // FairPlay 加密的主二进制：**确定性不可用**，必须在导入期就拒绝（2026-09-21）。
+        //
+        // 重签名会换掉整个签名，而 FairPlay 的解密密钥与 App Store 的原签名绑定 ⇒
+        // 装上了也只会启动即闪退（`set_code_unprotect() error 7`）。
+        // 让用户走完「签名 → 安装 → 闪退」再回头找原因，等于白折腾一轮真机 ✗ ——
+        // 与安装侧那条「确定性拒绝必须立即终止」同源（`isTerminalInstallError`）。
+        //
+        // 判据可靠性：`cryptid != 0` ⇒ 在**无越狱**设备上必然闪退。砸壳工具都会把
+        // `cryptid` 清 0；没清 0 的「已解密」包在设备上同样跑不起来
+        // ⇒ 这里**不存在误伤**（Seal 的目标场景就是无越狱侧载）。
+        // 判据本身是纯函数 `isEncryptedMachOHeader`（已有单测覆盖防呆与边界）。
+        //
+        // 与 `docs/qa/2026-09-18-signing-coverage-gap-report.md` 里「导入时就拦」的说法对齐 ——
+        // 在此之前那句描述**与代码不符**（代码只 `warnings.append`，不拦）✗。
+        if isEncryptedBinary(appRoot: appRoot, entries: entries, archive: archive) {
+            throw failure(
+                title: "IPA 未砸壳（App Store 加密版）",
+                reason: "主二进制仍带 FairPlay 加密（cryptid != 0）。重签名能装上去，"
+                    + "但解密密钥与 App Store 原签名绑定，启动会立即闪退。",
+                recovery: "用砸壳工具（CrackerXI / frida-ios-dump 等）重新导出未加密的 IPA 后再导入",
+                code: "SEAL-IPA-107"
+            )
+        }
         let importWarnings = detectImportWarnings(
             appRoot: appRoot,
             entries: entries,
@@ -364,10 +387,9 @@ struct IPAParserService: Sendable {
     ) -> [String] {
         var warnings: [String] = []
 
-        // 检测加密 IPA（App Store 下载的加密 IPA 无法签名）
-        if isEncryptedBinary(appRoot: appRoot, entries: entries, archive: archive) {
-            warnings.append("主二进制已加密（App Store 版本），需要砸壳后才能签名")
-        }
+        // ⚠️ 加密检测**已上移到 `parse()` 的拒绝路径**（`SEAL-IPA-107`）——
+        // 加密是**确定性不可用**，不该降级成一条可被忽略的警告。
+        // 保留一条永远不会触发的死警告 ＝ 又造一处「代码在、行为不在」✗，故整段移除。
 
         // 检测 Watch app（免费账号不支持）
         let hasWatchApp = entries.contains { entry in

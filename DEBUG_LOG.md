@@ -7,6 +7,16 @@
 
 ## 常犯坑位
 
+- 🔴 **「文档写着已覆盖 ✅」≠「代码真的做了」—— 能力表尤其危险**（2026-09-21）。
+  实例：`docs/qa/2026-09-18-signing-coverage-gap-report.md` 的能力表里，
+  「加密二进制（App Store FairPlay）」一行写着「**导入时就拦**」并标 ✅，
+  而代码只是 `warnings.append(...)` ⇒ **只警告、不拦** ✗。
+  ⚠️ 危害比「代码没写」更大：**后续排查会直接跳过这一项**（"审计过、✅ 覆盖了"）。
+  - **判据**：引用能力表下结论前，`grep` 那条断言的**具体落点**（可检索的符号，
+    如错误码、函数名、`throw` 语句），而不是看表格里的 ✅ ✓。
+  - 同族：本仓那条「『注释写着对齐上游』不等于真的对齐」（`SinfOptions` 那次）。
+    ⇒ **三类自述都要独立取证：注释、文档、提交信息** ✓
+
 - 🔴 **「代码在、注释在、行为不在」—— 移植上游时改掉键名/判据，代码会静默空转**（2026-09-21）。
   真机症状：源阅读装不上，报 `ApplicationSINFCaptureFailed (Root sinf URL points outside of bundle)`；
   而「清理 `SC_Info`」的代码**就在那里、注释也写着意图**，看起来早就处理过了 ✗。
@@ -466,6 +476,36 @@
 ---
 
 ## 历史记录
+
+### 2026-09-21 · 未砸壳的加密 IPA：从「只警告」升级为导入期拒绝
+
+**背景**：修完 `SC_Info`（同一批）后顺着问了一句「这类包装上了能跑吗」—— 答案是**不能**。
+`cryptid != 0`（App Store 加密版）的包：重签会换掉整个签名，而 FairPlay 的解密密钥
+与原签名绑定 ⇒ **装上了也只会启动即闪退**（`set_code_unprotect() error 7`）✗。
+
+**发现的偏差**：`docs/qa/2026-09-18-signing-coverage-gap-report.md` 的能力表里写着
+「加密二进制（App Store FairPlay）…… **导入时就拦**」并标 ✅，
+而 `IPAParserService.detectImportWarnings` 实际只是
+`warnings.append("主二进制已加密（App Store 版本），需要砸壳后才能签名")`
+⇒ **只警告、不拦** ✗ —— **文档与代码不符**，而「✅ 已验证」的语气更容易骗过后续排查。
+
+**修复**：把加密检测**上移到 `parse()` 的拒绝路径**，抛 `SEAL-IPA-107`
+（`title` 点明「未砸壳」、`recovery` 指向砸壳工具）；
+同时**删掉 `detectImportWarnings` 里那条警告** —— 拒绝路径已经拦下，
+留着它就是**永远不会触发的死警告** ＝ 又一处「代码在、行为不在」✗。
+
+**判据可靠性（为什么敢硬拒）**：`cryptid != 0` ⇒ 在**无越狱**设备上必然闪退；
+砸壳工具都会把 `cryptid` 清 0，没清 0 的「已解密」包在设备上同样跑不起来
+⇒ **不存在误伤**（Seal 的目标场景就是无越狱侧载）✓。
+判据本身是纯函数 `isEncryptedMachOHeader`，已有单测覆盖 `cmdsize` 防呆与 fat 包边界。
+
+**涉及文件**：`Seal/Core/Import/IPAParserService.swift`、`docs/qa/log-code-index.md`
+（新增「导入 / IPA 校验」段）、`Scripts/verify-release-safety.py`（R67 ＋ 2 个变异锚点）。
+
+**验证状态**：⚠️ 待真机 —— 拿一个 App Store 原版（未砸壳）IPA 导入 ⇒
+应在**导入期**就被拒并显示 `SEAL-IPA-107`。
+
+**顺带修**：`checks += 14` → `checks += 6`（上一轮我按错误规则改的，见「常犯坑位」）。
 
 ### 2026-09-21 · 源阅读「有图标点不开」：清理 SC_Info 的代码从未生效
 
