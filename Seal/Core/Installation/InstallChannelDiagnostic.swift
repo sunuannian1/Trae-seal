@@ -93,6 +93,7 @@ enum InstallFailureAction: Equatable, Sendable {
 enum InstallFailureActionPolicy {
     /// 立即终止、不重试（recovery 文案各自说明后续人工动作）。
     static let acknowledgeCodes: Set<String> = [
+        "SEAL-INSTALL-702f",   // DRM 元数据残留（SC_Info/sinf）：该 IPA 需重新砸壳导出
         "SEAL-INSTALL-702l",   // iOS 拒绝：免费账号 3 应用上限 / 完整性校验
         "SEAL-INSTALL-702s",   // 设备存储空间不足
         "SEAL-INSTALL-702t",   // 安装超时：底下很可能仍在跑，重跑即并发安装

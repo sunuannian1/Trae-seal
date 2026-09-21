@@ -630,6 +630,10 @@ actor MinimuxerInstallChannel: InstallChannel {
             || lower.contains("failed to verify")
             || lower.contains("code signature")
             || lower.contains("signed resource")
+            // DRM 元数据残留（SC_Info 里登记的 sinf 路径越界）：installd 捕获 sinf 失败。
+            // 真机实测（构建 184，源阅读）：ApplicationSINFCaptureFailed
+            // (Root sinf URL points outside of bundle)。同一份包必然同错 ⇒ 首次即终止。
+            || lower.contains("sinf")
             || lower.contains("invalidsignature")
             || lower.contains("profileexpired")
             || lower.contains("untrusted")
@@ -1138,6 +1142,21 @@ actor MinimuxerInstallChannel: InstallChannel {
                 reason: "设备在解压并复制应用时空间不足。\(detail)",
                 recovery: "删除一个或多个 App 或在系统设置中清理存储空间后重试",
                 code: "SEAL-INSTALL-702s"
+            )
+        }
+
+        // 1b) DRM 元数据残留（SC_Info 里登记的 sinf 路径越界）：installd 无法捕获 sinf。
+        //     真机实测（构建 184，源阅读）：ApplicationSINFCaptureFailed
+        //     (Root sinf URL points outside of bundle)。
+        //     ⚠️ 与分支 2 分开的理由：这不是「免费账号 3 应用上限 / 签名校验失败」，
+        //     给用户的动作完全不同（换账号 / 卸载 App 都无效，该包必须重新砸壳导出）。
+        //     同一份 IPA 必然同错 ⇒ `isTerminalInstallError` 也把 sinf 列为确定性拒绝。
+        if lower.contains("sinf") {
+            return ImportFailure(
+                title: "安装被 iOS 拒绝（DRM 元数据）",
+                reason: "IPA 内残留 App Store 的 DRM 元数据（SC_Info），iOS 无法从中捕获签名信息。\(detail)",
+                recovery: "该 IPA 需先用砸壳工具重新导出（去掉 SC_Info）后再签名",
+                code: "SEAL-INSTALL-702f"
             )
         }
 

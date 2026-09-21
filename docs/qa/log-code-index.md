@@ -42,6 +42,7 @@
 | 码 | 它在说什么 | 出处 |
 |---|---|---|
 | `SEAL-INSTALL-701` | 本地隧道未就绪，无法连接设备（确认 Wi-Fi + LocalDevVPN 已连接） | `MinimuxerInstallChannel.swift` |
+| `SEAL-INSTALL-702f` | IPA 残留 **DRM 元数据**（`SC_Info` 里登记的 sinf 路径越界，installd 捕获 sinf 失败）：该包需**重新砸壳导出**，重签同一份无效 | `MinimuxerInstallChannel.swift` |
 | `SEAL-INSTALL-702l` | iOS 拒绝了安装：**免费账号已装 3 个自签应用**或签名校验失败 | `MinimuxerInstallChannel.swift` |
 | `SEAL-INSTALL-702s` | 设备**空间不足**（解压复制阶段） | `MinimuxerInstallChannel.swift` |
 | `SEAL-VPN-001` | 签名完成后仍无法连接设备完成安装 | `SigningCoordinator.swift` |

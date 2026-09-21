@@ -98,8 +98,10 @@ struct SigningWorkspace: Sendable {
             // 自动移除免费账号不支持的内容：Watch App、App Clip
             // 参照 SideStore/AltStore 官方逻辑，这些内容免费账号无法签名
             try removeUnsupportedBundles(in: appURL)
-            // 对齐 SideStore：清理 SC_Info/Manifest.plist 中指向已删除扩展的引用
-            try removeMissingAppExtensionReferences(in: appURL)
+            // 移除包内所有 SC_Info（FairPlay DRM 元数据）。
+            // 必须在签名之前：SC_Info 里登记的 sinf 路径一旦越界，installd 会拒绝安装
+            // （ApplicationSINFCaptureFailed），而桌面图标已注册且不回收。
+            try removeDRMMetadata(in: appURL)
 
             // 清理 ESign 等其它签名工具留下的注入脚本/标记残留（容错，不阻断签名）。
             removeThirdPartyInjectionArtifacts(in: appURL)
@@ -532,65 +534,54 @@ struct SigningWorkspace: Sendable {
         try updated.write(to: infoURL, options: .atomic)
     }
 
-    // MARK: - SC_Info / Manifest.plist cleanup (对齐 SideStore)
+    // MARK: - SC_Info / DRM 元数据清理
 
-    /// 移除 SC_Info/Manifest.plist 中指向已被删除扩展的引用。
-    /// DRM 正版 IPA 的 SC_Info/Manifest.plist 会列出所有扩展，若扩展被删除而 Manifest 未更新，
-    /// installd 校验时会报 MissingBundle 或安装失败。
-    private func removeMissingAppExtensionReferences(in appURL: URL) throws {
-        let scInfoURL = appURL.appendingPathComponent("SC_Info")
-        guard FileManager.default.fileExists(atPath: scInfoURL.path) else { return }
+    /// 递归找出 bundle 内所有 `SC_Info` 目录（FairPlay DRM 元数据）。
+    ///
+    /// 抽成 `internal static` 是为了能单测 —— `private` 在 `@testable import` 下**不可见**。
+    ///
+    /// ⚠️ 必须**递归**：`SC_Info` 不止在 app 根目录，嵌套 bundle 里也有。真实样本的
+    /// `SinfReplicationPaths` 同时列着 `Frameworks/Cronet.framework/SC_Info/…` 与
+    /// `PlugIns/*.appex/SC_Info/…` ⇒ 只删根目录那一个会漏掉大多数引用。
+    static func drmMetadataDirectories(in appURL: URL) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: appURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: []
+        ) else { return [] }
 
-        let manifestURL = scInfoURL.appendingPathComponent("Manifest.plist")
-        guard FileManager.default.fileExists(atPath: manifestURL.path) else { return }
-
-        let data = try Data(contentsOf: manifestURL)
-        var format = PropertyListSerialization.PropertyListFormat.binary
-        let value = try PropertyListSerialization.propertyList(
-            from: data,
-            options: [.mutableContainersAndLeaves],
-            format: &format
-        )
-        guard var manifest = value as? [String: Any] else { return }
-
-        let pluginsURL = appURL.appendingPathComponent("PlugIns")
-        var changed = false
-
-        // SinfOptions: [SinfID: [BundlePath: ...]]
-        if var sinfOptions = manifest["SinfOptions"] as? [String: Any] {
-            for (key, entry) in sinfOptions {
-                guard let dict = entry as? [String: Any],
-                      let bundlePath = dict["BundlePath"] as? String else { continue }
-                let appexName = (bundlePath as NSString).lastPathComponent
-                let appexURL = pluginsURL.appendingPathComponent(appexName)
-                if FileManager.default.fileExists(atPath: appexURL.path) == false {
-                    sinfOptions.removeValue(forKey: key)
-                    changed = true
-                }
-            }
-            manifest["SinfOptions"] = sinfOptions
+        var directories: [URL] = []
+        for case let url as URL in enumerator where url.lastPathComponent == "SC_Info" {
+            directories.append(url)
+            enumerator.skipDescendants()
         }
+        return directories
+    }
 
-        // SinfIDs 数组形式
-        if var sinfIDs = manifest["SinfIDs"] as? [[String: Any]] {
-            sinfIDs.removeAll { entry in
-                guard let bundlePath = entry["BundlePath"] as? String else { return false }
-                let appexName = (bundlePath as NSString).lastPathComponent
-                let appexURL = pluginsURL.appendingPathComponent(appexName)
-                let missing = FileManager.default.fileExists(atPath: appexURL.path) == false
-                if missing { changed = true }
-                return missing
-            }
-            manifest["SinfIDs"] = sinfIDs
-        }
-
-        if changed {
-            let updated = try PropertyListSerialization.data(
-                fromPropertyList: manifest,
-                format: format,
-                options: 0
-            )
-            try updated.write(to: manifestURL, options: .atomic)
+    /// 移除包内所有 `SC_Info` 目录（FairPlay DRM 元数据）。
+    ///
+    /// **真机闭环**（构建 184，源阅读，2026-09-21）：`SC_Info/Manifest.plist` 登记的
+    /// root sinf 路径越界时，installd 报
+    /// `ApplicationSINFCaptureFailed (Root sinf URL points outside of bundle)` 拒绝安装；
+    /// 而图标**已经**注册给 SpringBoard 且失败路径不回收 ⇒ 表现为「桌面有图标、点开无反应」。
+    ///
+    /// **为什么整目录删，而不是像上游那样逐条过滤 `SinfReplicationPaths`**：
+    /// 1. 上游（AltStore `ResignAppOperation` 与 SideStore 同名实现，两家**逐字相同**）
+    ///    只处理 `SinfReplicationPaths`，**不碰 `SinfPaths`** —— 而真机报的正是 "**Root** sinf"，
+    ///    root sinf 就登记在 `SinfPaths` 里 ⇒ **照抄上游解决不了这个形态** ✗；
+    /// 2. 逐条过滤要预先枚举「哪些键会出问题、哪些路径算越界」，属**枚举式修补** ——
+    ///    漏一个就**静默失效**：本仓此前那版就是键名写错（找 `SinfOptions`/`SinfIDs`，
+    ///    而真实 `Manifest.plist` 只有 `SinfPaths`/`SinfReplicationPaths`），
+    ///    `as? [String: Any]` 恒 nil ⇒ `changed` 恒 false ⇒ **一个字节都没写过** ✗；
+    /// 3. 走到这里时主二进制已解密（`cryptid == 0`，未砸壳的包在导入阶段就被拒），
+    ///    重签后 DRM 早已失效，`SC_Info` 对运行**毫无用途** —— 行业里砸壳导出的 IPA
+    ///    本就不含 `SC_Info`，删除不引入任何副作用 ✓。
+    ///
+    /// 与 `removeOldSignatures`（删 `_CodeSignature`）同属
+    /// 「按类别清理包内残留」这一体系，见 `prepare` 里的调用序列。
+    private func removeDRMMetadata(in appURL: URL) throws {
+        for directory in Self.drmMetadataDirectories(in: appURL) {
+            try FileManager.default.removeItem(at: directory)
         }
     }
 

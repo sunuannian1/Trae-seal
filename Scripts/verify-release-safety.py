@@ -3403,8 +3403,64 @@ def violations(load=read):
           "`Muxer.reset()` 会把 remotePairing 清成 false，之后再问恒为假 ⇒ "
           "`RustIdevice.invalidateConnection()` 永远不执行，重试一直复用死连接 ✗")
 
+    # R65: `SC_Info`（FairPlay DRM 元数据）必须**整目录递归删**，不许回到
+    # 「按 Manifest.plist 里的键逐条过滤」那种枚举式修补（2026-09-21）。
+    #
+    # 真机闭环（构建 184，源阅读）：`SC_Info/Manifest.plist` 登记的 root sinf 路径越界
+    # ⇒ installd 报 `ApplicationSINFCaptureFailed (Root sinf URL points outside of bundle)`
+    # 拒绝安装；而图标**已经**注册给 SpringBoard 且失败路径不回收
+    # ⇒ 用户看到「桌面有图标、点开无反应」✗。
+    #
+    # ⚠️ 旧实现（已删）找的是 `SinfOptions` / `SinfIDs` 两个键，而真实 Manifest.plist
+    # 只有 `SinfPaths` / `SinfReplicationPaths` ⇒ `as? [String: Any]` 恒 nil ⇒
+    # `changed` 恒 false ⇒ **一个字节都没写过**（代码在、注释在、行为不在）✗✗。
+    # 上游 AltStore/SideStore 逐字相同、只处理 `SinfReplicationPaths`，**不碰 `SinfPaths`**
+    # —— 而错误说的正是 "**Root** sinf" ⇒ **照抄上游也解决不了** ✗。
+    signing_ws = strip_comments(load("Seal/Infrastructure/Signing/SigningWorkspace.swift"))
+    check("static func drmMetadataDirectories(in appURL: URL) -> [URL]" in signing_ws,
+          "R65: SC_Info 清理必须抽成可单测的 `drmMetadataDirectories(in:)` ✗ —— "
+          "`private` 在 `@testable import` 下不可见，写成 private 就测不到")
+    check("for case let url as URL in enumerator where url.lastPathComponent == \"SC_Info\"" in signing_ws,
+          "R65: 必须**递归**枚举找 SC_Info ✗ —— 嵌套 bundle（Frameworks/*.framework、"
+          "PlugIns/*.appex）里也有，只删 app 根目录那一个会漏掉大多数引用")
+    check("enumerator.skipDescendants()" in signing_ws,
+          "R65: 命中 SC_Info 后要 `skipDescendants()` ✗ —— 它的子目录（Manifest.plist 等）"
+          "没有继续遍历的价值")
+    check("try removeDRMMetadata(in: appURL)" in signing_ws,
+          "R65: `prepare` 阶段必须调用 `removeDRMMetadata` ✗ —— 函数定义了没人调，"
+          "等于原地留下第二份「写了但没生效」")
+    check("SinfOptions" not in signing_ws and "SinfIDs" not in signing_ws,
+          "R65: 不许回到按 `SinfOptions`/`SinfIDs` 逐条过滤 ✗ —— 真实 Manifest.plist "
+          "没有这两个键（实测只有 SinfPaths/SinfReplicationPaths），会**静默空转**")
+
+    # R66: 「确定性安装拒绝」与「最终归类」两张词表必须同时认得 `sinf`（2026-09-21）。
+    #
+    # 真机（构建 184）：`ApplicationSINFCaptureFailed` 被判成「可重试」
+    # ⇒ 28.7 MB 的包**白传 3 轮**（日志里 `第 1/3 次 → 2/3 次 → 3/3 次`），
+    # 违反「确定性拒绝必须立即终止」。同一份 IPA 必然同错，重传毫无意义 ✗。
+    # 两张表还要各司其职：前者决定**要不要重传**，后者决定**给用户什么动作** ——
+    # sinf 的恢复动作是「重新砸壳导出」，与「免费账号 3 应用上限」完全不同，
+    # 混进同一个分支会把用户引向换账号 / 卸载 App 这些**无效**操作 ✗。
+    install_channel = strip_comments(
+        load("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift")
+    )
+    terminal_body = section_or_empty(
+        install_channel,
+        "static func isTerminalInstallError(",
+        "private static func isTimeoutInstallError("
+    )
+    check('|| lower.contains("sinf")' in terminal_body,
+          "R66: `isTerminalInstallError` 必须把 sinf 判为确定性拒绝 ✗ —— "
+          "否则同一份包会被白传 3 轮")
+    check('if lower.contains("sinf") {' in install_channel,
+          "R66: `installationFailure` 必须有 sinf 专属分支 ✗ —— "
+          "落到「免费账号 3 应用上限」那条会给用户无效指引")
+    check('code: "SEAL-INSTALL-702f"' in install_channel,
+          "R66: sinf 分支必须带专属码 `SEAL-INSTALL-702f` ✗ —— "
+          "并在 `InstallFailureActionPolicy.acknowledgeCodes` 里登记为「不重试」")
+
     handoff_failures = HANDOFF_GUARD["violations"](load)
-    checks += 6
+    checks += 14
     failures.extend(handoff_failures)
     return checks, failures
 
@@ -3636,6 +3692,21 @@ def main():
          "Sacrifice: affected installed apps must be re-signed after the retry succeeds"),
     ]
     mutations += [
+        # R65: 把「递归删所有 SC_Info」退回「只删 app 根目录那一个」——
+        # 嵌套 bundle（Frameworks/PlugIns）里的 SC_Info 会留下来，真机上仍然装不上。
+        ("Seal/Infrastructure/Signing/SigningWorkspace.swift",
+         "        for case let url as URL in enumerator where url.lastPathComponent == \"SC_Info\" {\n"
+         "            directories.append(url)\n"
+         "            enumerator.skipDescendants()\n"
+         "        }",
+         "        let root = appURL.appendingPathComponent(\"SC_Info\")\n"
+         "        if FileManager.default.fileExists(atPath: root.path) { directories.append(root) }",
+         "R65:"),
+        # R66: 删掉确定性拒绝那一侧的 sinf ⇒ 28.7 MB 的包又会被白传 3 轮。
+        ("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
+         "            || lower.contains(\"sinf\")\n",
+         "",
+         "R66:"),
         ("Seal/Infrastructure/Pairing/PairingStore.swift",
          '"HostCertificate", "HostPrivateKey", "RootCertificate", "RootPrivateKey"',
          '"HostCertificate", "RootCertificate"',

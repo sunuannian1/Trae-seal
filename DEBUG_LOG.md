@@ -7,6 +7,30 @@
 
 ## 常犯坑位
 
+- 🔴 **「代码在、注释在、行为不在」—— 移植上游时改掉键名/判据，代码会静默空转**（2026-09-21）。
+  真机症状：源阅读装不上，报 `ApplicationSINFCaptureFailed (Root sinf URL points outside of bundle)`；
+  而「清理 `SC_Info`」的代码**就在那里、注释也写着意图**，看起来早就处理过了 ✗。
+  - **根因**：那段代码找的是 `Manifest.plist` 里的 `SinfOptions` / `SinfIDs`，
+    而**真实**的 `SC_Info/Manifest.plist` 只有两个顶层键 ——
+    `SinfPaths`（登记 root sinf 本身）与 `SinfReplicationPaths`（其余 sinf 的复制路径）。
+    `manifest["SinfOptions"] as? [String: Any]` **恒为 nil** ⇒ `changed` 恒 false
+    ⇒ **一个字节都没写过**，整段代码等于不存在 ✗。
+  - **取证方法（比读源码可靠）**：拿**真实样本**核对键名 —— 设备 dump 出来的
+    `SC_Info/Manifest.plist`（本次用 `AloneMonkey/iOSREBook` 收录的 Snapchat 包，604 字节 XML），
+    再全仓 `grep -rn "SinfOptions\|SinfIDs"`（**只命中 Seal 自己 6 行**；AltStore / SideStore /
+    rork-sign 三家上游**零命中**）。⚠️ `.sinf` 本身是**二进制**（4 字符 tag：`mode`@0xC6 /
+    `plat` / `aver` / `tran` / `priv`@0x1E0），**不是 plist** ⇒ 那两个键也不可能藏在 `.sinf` 里。
+  - **「注释写着『对齐上游』」不等于真的对齐** ✗：Seal 那段注释明写「对齐 SideStore」，
+    而上游（AltStore `ResignAppOperation:279` 与 SideStore `:205`，两家**逐字相同**）用的是
+    `SinfReplicationPaths` + `URL(string:relativeTo:)` 解析后**文件是否存在**的判据 ——
+    **键名与判据两样都不一样**。
+  - **判据**：写完「移植 / 对齐上游」的代码，问一句 ——
+    **「这段代码在什么输入下会真的执行？」** 答不出具体输入形态，就说明它可能永远不执行 ✓。
+  - 🔴 **连带结论：照抄上游也不够**。上游**只处理 `SinfReplicationPaths`，从不碰 `SinfPaths`**
+    —— 而真机报的正是 "**Root** sinf"，root sinf 就登记在 `SinfPaths` 里
+    ⇒ **即使完全照上游实现，本次问题依然存在** ✗。所以修法取
+    **整目录递归删 `SC_Info`**（消除整类形态），而不是逐条过滤（枚举式修补，漏一个就静默失效）。
+
 - 🔴 **交付产物的校验清单：「内容对」≠「能用」**（2026-09-21，同一族第三次）。
   `sha256sum -c` 的**验收动作只能是拿目标工具真的跑一次全 OK** ✓；
   「哈希值看着对」不算验收 ✗ —— 已发生的两个实例**哈希本身都是对的**：
@@ -442,6 +466,47 @@
 ---
 
 ## 历史记录
+
+### 2026-09-21 · 源阅读「有图标点不开」：清理 SC_Info 的代码从未生效
+
+**现象**：真机（构建 184）装「源阅读」失败，日志重复 5 次
+`ApplicationSINFCaptureFailed (Root sinf URL points outside of bundle)`，3 轮全同错；
+**桌面留下了图标但点开无反应**。
+
+**根因**：`SigningWorkspace.removeMissingAppExtensionReferences` 在 `Manifest.plist` 里
+找 `SinfOptions` / `SinfIDs`，而真实的 `SC_Info/Manifest.plist` 只有
+`SinfPaths` 与 `SinfReplicationPaths` ⇒ `as? [String: Any]` 恒 nil ⇒ `changed` 恒 false
+⇒ **一个字节都没写** ✗。于是 `SC_Info` 原样保留，installd 捕获 root sinf 时发现 URL 越界
+⇒ 拒绝安装；而失败发生在「向 SpringBoard 注册图标」**之后**、且失败路径不回收图标
+⇒ 用户看到「有图标、点不开」。
+
+**修复**：
+1. 删掉该函数，改为 `removeDRMMetadata(in:)` ＋ 可单测的 `drmMetadataDirectories(in:)`
+   —— **递归删掉包内所有 `SC_Info` 目录**（嵌套 `Frameworks/*.framework`、
+   `PlugIns/*.appex` 里也有，必须递归）。取「整类消除」而非「逐条过滤」的理由：
+   上游**从不碰 `SinfPaths`**（而错误说的正是 Root sinf）⇒ 照抄上游解决不了；
+   且重签后 DRM 已失效、`SC_Info` 对运行毫无用途（砸壳 IPA 本就不含它）。
+2. `isTerminalInstallError` 与 `installationFailure` **两张词表**都补 `sinf`，
+   并给后者加**专属分支** ＋ 新码 `SEAL-INSTALL-702f`
+   （恢复动作是「重新砸壳导出」，与「免费账号 3 应用上限」完全不同）；
+   `InstallFailureActionPolicy.acknowledgeCodes` 登记该码（不重试）。
+
+**为什么它会白传 3 轮**：`ApplicationSINFCaptureFailed` 不在确定性拒绝词表里
+⇒ 被判为可重试 ⇒ 28.7 MB 的包传了 3 遍（日志里 `第 1/3 次 → 2/3 次 → 3/3 次`）✗。
+
+**涉及文件**：`Seal/Infrastructure/Signing/SigningWorkspace.swift`、
+`Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift`、
+`Seal/Core/Installation/InstallChannelDiagnostic.swift`、
+`SealTests/Signing/SigningWorkspaceDRMMetadataTests.swift`（新增）、
+`SealTests/Installation/InstallChannelDiagnosticClassificationTests.swift`、
+`docs/qa/log-code-index.md`、`Scripts/verify-release-safety.py`（R65 / R66）。
+
+**验证状态**：⚠️ **待真机**。守卫 R65 / R66 本地跑；编译与单测需 CI
+（`build-package` 不编译测试 target，测试问题看 `swift-regression`）。
+**真机验收**：拿同一个「源阅读」IPA 重签安装 ⇒ 应装得上且打得开，
+日志里不该再出现 `ApplicationSINFCaptureFailed`。
+⚠️ 若该 IPA 主二进制 `cryptid != 0`（未砸壳），装上也**启动即闪退**
+（`set_code_unprotect() error 7`）—— 那是另一个问题（需先砸壳），本修复不覆盖。
 
 ### 2026-09-21 · 配对助手的校验清单：哈希对，但 `-c` 跑不通（编码修了，行尾没修）
 

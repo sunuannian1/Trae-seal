@@ -135,6 +135,16 @@ struct InstallChannelDiagnosticClassificationTests {
         #expect(detail.contains("MissingPackagePath"))
     }
 
+    /// 真机实测（构建 184，源阅读）：IPA 残留的 `SC_Info` 里登记的 root sinf 路径越界时，
+    /// installd 报 `ApplicationSINFCaptureFailed (Root sinf URL points outside of bundle)`。
+    /// 同一份包必然同错 ⇒ 必须判为**确定性拒绝**，否则 28.7 MB 的包会被白传 3 轮
+    /// （真机上确实白传了 3 轮，违反「确定性拒绝必须立即终止」）。
+    @Test
+    func sinfCaptureFailureIsTerminal() {
+        let detail = "UnknownErrorType(\"ApplicationSINFCaptureFailed (Root sinf URL points outside of bundle)\")"
+        #expect(Channel.isTerminalInstallError(detail))
+    }
+
     // MARK: - 错误码 → 主处置动作（显式集合，不许用数字区间）
 
     /// 738 / 737 的 recovery 写的是「重新启动 Seal 后再试」，一旦被区间匹配算成
@@ -143,6 +153,7 @@ struct InstallChannelDiagnosticClassificationTests {
         ("SEAL-INSTALL-738", InstallFailureAction.acknowledge),
         ("SEAL-INSTALL-737", InstallFailureAction.acknowledge),
         ("SEAL-INSTALL-702t", InstallFailureAction.acknowledge),
+        ("SEAL-INSTALL-702f", InstallFailureAction.acknowledge),
         ("SEAL-INSTALL-702l", InstallFailureAction.acknowledge),
         ("SEAL-INSTALL-702s", InstallFailureAction.acknowledge),
         ("SEAL-APPID-DEVICELIMIT", InstallFailureAction.acknowledge),
