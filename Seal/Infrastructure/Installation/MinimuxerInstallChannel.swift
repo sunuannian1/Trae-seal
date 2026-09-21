@@ -316,7 +316,41 @@ actor MinimuxerInstallChannel: InstallChannel {
         return deviceIdentifier
     }
 
+    /// 通道诊断：**带无条件留痕**地跑一遍 `performDiagnose()`。
+    ///
+    /// ⚠️ 这一层存在的唯一理由是**日志**（2026-09-21，iOS 16.2 真机）✗：
+    /// 在此之前整条诊断链路**一条日志都不写** —— 于是真机上「验证中」卡住时，
+    /// **成功行与失败行都不出现**（用户 5 分钟内 3 次导入配对文件，导出的 27 行日志里
+    /// 没有任何一条来自这条链路）⇒ 用户和我都无法判断是「还在跑」还是「已经死了」✗。
+    ///
+    /// 判据：只要 `diagnose()` 返回，日志里必然有一条带**耗时 + 逐步状态 + 失败码**的
+    /// 结论行；`stepsSummary` 直接说出**卡在哪一步**，不必回读界面。
+    ///
+    /// ⚠️ 留痕做成**包一层**而不是在每个 `return` 前补一句：诊断有 5 个出口
+    /// （配对缺失 / 配对不匹配 / 连接失败 / 探测失败 / 安装服务未就绪 / 成功），
+    /// 逐个补迟早会漏一个 —— 而漏掉的那个恰好就是下次要查的那个 ✗。
     func diagnose() async -> InstallChannelDiagnostics {
+        let startedAt = Date()
+        await log("通道检测开始：配对文件 → LocalDevVPN 通道 → 本机连接 → 设备响应")
+        let diagnostics = await performDiagnose()
+        let summary = Self.stepsSummary(diagnostics.steps)
+        if diagnostics.isReady {
+            await log("通道检测完成（耗时 \(Self.elapsedText(since: startedAt))）：\(summary)")
+        } else {
+            let failure = diagnostics.failure
+            await log(
+                "通道检测未通过（耗时 \(Self.elapsedText(since: startedAt))）：\(summary)"
+                    + (failure.map { "；首个错误：\($0.title)（\($0.code)）" } ?? ""),
+                level: .error,
+                code: failure?.code
+            )
+        }
+        return diagnostics
+    }
+
+    /// 诊断主体。**不要在这里补日志** —— 留痕统一由 `diagnose()` 负责，
+    /// 否则又会退化成「新增 return 分支绕过日志」✗。
+    private func performDiagnose() async -> InstallChannelDiagnostics {
         var steps = InstallChannelDiagnostics.empty.steps
         var deviceIdentifier: String?
         // 追踪当前正进行到哪一步，顶层 catch 据此归因，避免配对/目录/设备断开等
@@ -427,9 +461,14 @@ actor MinimuxerInstallChannel: InstallChannel {
             }
             // 首次 RSD 握手（pair-verify + TLS-PSK + RSD handshake）在无线/冷启动时可能超过旧的 10 秒，
             // 过短会把“正在建立”误判成“设备未响应/连接失败”。延长到约 18 秒，成功即退出。
+            // 36 轮探测是本链路唯一可能长时间静默的区间 ⇒ 进/出各留一条，
+            // 这样「卡在循环里」与「循环跑完但后面卡住」才能分开（2026-09-21）。
+            await log("开始探测设备响应：最多 36 轮（每轮约 1 秒探测 + 0.5 秒间隔）")
             var resolvedUDID: String?
+            var probeRounds = 0
             for attempt in 0..<36 {
                 NetworkObserver.shared.refreshEndpoint()
+                probeRounds = attempt + 1
                 resolvedUDID = try await readyDeviceIdentifier()
                 if resolvedUDID != nil { break }
                 if attempt == 12, tunnelReachable == false {
@@ -438,6 +477,9 @@ actor MinimuxerInstallChannel: InstallChannel {
                 }
                 try? await Task.sleep(for: .milliseconds(500))
             }
+            await log(resolvedUDID == nil
+                      ? "设备探测结束：\(probeRounds) 轮内未取到设备标识"
+                      : "设备探测结束：第 \(probeRounds) 轮取到设备标识")
             guard let udid = resolvedUDID else {
                 return fail(
                     .deviceIdentifier,
@@ -573,6 +615,17 @@ actor MinimuxerInstallChannel: InstallChannel {
 
     private static func elapsedText(since start: Date) -> String {
         String(format: "%.1f 秒", Date().timeIntervalSince(start))
+    }
+
+    /// 把六个诊断步骤压成一行（如「设备配对=正常、VPN 通道=待检测、…」）。
+    ///
+    /// 这是**真机排障唯一的定位手段**：`diagnose()` 可能跑几十秒到几分钟，
+    /// 日志里必须能直接读出「卡在哪一步」，否则只能让用户回读界面或反复重试 ✗。
+    ///
+    /// ⚠️ 用 actor 的 `static`（默认 nonisolated）而不是实例方法：它不碰任何
+    /// actor 状态，且要能在单测里**同步**调用（纯函数才测得到）。
+    static func stepsSummary(_ steps: [InstallDiagnosticStep]) -> String {
+        steps.map { "\($0.title)=\($0.valueText)" }.joined(separator: "、")
     }
 
     /// 底层错误 → 可读文本（Rust FFI 的 MinimuxerError 优先，其余退回 NSError 描述）。

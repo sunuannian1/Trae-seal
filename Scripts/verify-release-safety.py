@@ -3601,6 +3601,45 @@ def violations(load=read):
           "R69: 助手卡片必须保留版本分流提示 `" + lockdown_hint + "` ✗ —— "
           "它是真机验证操作单第 4 步的验收判据，对 iOS 16 同样成立（16 < 17.4 ⇒ Lockdown）")
 
+    # R70: 安装通道诊断必须**留痕**（2026-09-21，iOS 16.2 真机）✗
+    #
+    # 症状：真机「验证中」卡住，用户导出的 27 行日志里**成功行与失败行都不出现** ——
+    # 而这条链路按设计「只要跑完就必然写一条」（成功写 `successMessage`，
+    # 失败走 `finishInstallChannelCheckWithFailure`）⇒ 用户和我都无法判断
+    # 是「还在跑」还是「已经死了」✗。
+    #
+    # 根因：整条诊断链路（`MinimuxerInstallChannel.diagnose()`）**一条日志都不写** ——
+    # 当时全文件只有 1 处 `logStore.append`（在安装路径上），诊断那 160 行里零埋点，
+    # 而它恰好是本链路唯一可能长时间静默的区间（36 轮探测 ≈ 20–60 秒，
+    # 隧道不通时更久；冷启动那次还要多付一次 `Minimuxer.start`）✗。
+    #
+    # 判据：留痕必须做成**包一层**（`diagnose()` → `performDiagnose()`）——
+    # 诊断有 6 个出口（配对缺失 / 配对不匹配 / 连接失败 / 探测失败 /
+    # 安装服务未就绪 / 成功），逐个 `return` 前补一句迟早会漏掉一个，
+    # 而漏掉的恰好就是下次要查的那个 ✗。
+    diagnose_body = section_or_empty(
+        channel_source,
+        "func diagnose() async -> InstallChannelDiagnostics {",
+        "private func performDiagnose()",
+    )
+    check("await performDiagnose()" in diagnose_body
+          and "Self.stepsSummary(" in diagnose_body
+          and "Self.elapsedText(since: startedAt)" in diagnose_body,
+          "R70: `diagnose()` 必须**包住** `performDiagnose()` 并在出口写一条带"
+          "**耗时 + 逐步状态**的结论行 ✗ —— 诊断此前全程无日志，真机卡住时"
+          "成功行与失败行都不出现，无法区分「在跑」与「已经死了」✗")
+    check("static func stepsSummary(" in channel_source
+          and "func performDiagnose() async -> InstallChannelDiagnostics {" in channel_source,
+          "R70: 诊断主体必须与留痕层分开、且逐步状态能压成一行 ✗ —— "
+          "否则新增 `return` 分支会绕过日志，而日志又说不出「卡在哪一步」✗")
+    # ⚠️ 断言「单测文件里有这两个用例」：源码断言只能证明函数存在，
+    # 证明不了它真的把每一步的名字与状态写出来了（测试被删空 ⇒ 仍然全绿）。
+    summary_tests = load("SealTests/Installation/InstallChannelDiagnosticSummaryTests.swift")
+    check("func summaryNamesEveryStepWithItsOwnStatus()" in summary_tests
+          and "func summaryCoversEveryDisplayedStep()" in summary_tests,
+          "R70: 逐步状态的可读性必须有**真单测** ✗ —— "
+          "日志里那行「卡在哪一步」是这条链路唯一的排障手段，不能只靠源码断言")
+
     handoff_failures = HANDOFF_GUARD["violations"](load)
     checks += 6
     failures.extend(handoff_failures)
@@ -5201,6 +5240,20 @@ def main():
          "\"iOS 17.4 以下：本机配对（Lockdown）\"",
          "\"iOS 17 及以下：本机配对（Lockdown）\"",
          "R69:"),
+        # R70: 把出口日志里的逐步状态拿掉 ⇒ 日志说不出「卡在哪一步」，
+        # 真机排障重新退化成「只能让用户回读界面、或反复重试」✗ 报红。
+        # ⚠️ 锚点取**赋值那一行**而不是日志文案：文案里含 `\(` 插值，
+        # 而锚点里写 `\\(` 时层数写错不会报错、只会让断言与变异一个过一个不过 ✗
+        # （技能 5d 已记过一次）⇒ 用不含反斜杠的片段 ✓。
+        ("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
+         "        let summary = Self.stepsSummary(diagnostics.steps)\n",
+         '        let summary = ""\n',
+         "R70:"),
+        # R70（续）: 把新单测改名 ⇒ 证明「单测文件里有这两个用例」的断言真的会红。
+        ("SealTests/Installation/InstallChannelDiagnosticSummaryTests.swift",
+         "    func summaryNamesEveryStepWithItsOwnStatus() {",
+         "    func summaryNamesEveryStepWithItsOwnStatusRenamed() {",
+         "R70:"),
         # R68（CI 断言那条新路径）：把 `ios.yml` 的部署目标断言改回 17.0 ⇒ 原样重演
         # 2026-09-21 那次 `build-package` 在 `Verify deployment targets` 步骤红 ✓。
         # ⚠️ 这条锚点是**当初漏掉的那类判据**的守卫 —— 本地守卫当初全绿也照样红 CI，

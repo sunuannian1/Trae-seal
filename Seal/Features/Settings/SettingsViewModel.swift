@@ -2222,6 +2222,16 @@ final class SettingsViewModel: ObservableObject {
     private func runInstallChannelCheck(successMessage: String) async {
         guard let installChannel else { return }
         diagnosticState = .running
+        // 与 `MinimuxerInstallChannel.diagnose()` 的入口日志**配对**：两者之间只隔
+        // `markValidating()`，于是这段的耗时能直接从两条日志的时间戳读出（2026-09-21）。
+        // ⚠️ 这条不能省：`diagnose()` 的入口日志写在 `markValidating()` **之后**，
+        // 若卡在 `markValidating()`，日志里会一条都没有 ⇒ 又回到「无法区分」✗。
+        try? await logStore?.append(
+            category: .installation,
+            message: "开始检测安装通道：配对状态 → LocalDevVPN → 设备响应"
+        )
+        logs = (try? await logStore?.entries()) ?? logs
+        refreshLogExportText()
         if let pairingStore, pairingRecord != nil {
             do {
                 pairingRecord = try await pairingStore.markValidating()
@@ -2234,6 +2244,17 @@ final class SettingsViewModel: ObservableObject {
                 )
                 diagnosticState = .failed(failure)
                 alertFailure = failure
+                // ⚠️ 这个出口此前**只有弹窗、没有日志**（2026-09-21）：真机日志里于是
+                // 「既无成功行、也无失败行」，与「卡在 `diagnose()` 里」完全同形 ✗ ——
+                // 用户看到的弹窗不会随日志发回来，所以它等于静默。
+                try? await logStore?.append(
+                    category: .installation,
+                    level: .error,
+                    message: "安装通道检测中止：无法保存配对的验证中状态",
+                    code: "SEAL-PAIR-206"
+                )
+                logs = (try? await logStore?.entries()) ?? logs
+                refreshLogExportText()
                 return
             }
         }

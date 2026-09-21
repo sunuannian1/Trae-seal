@@ -7,6 +7,28 @@
 
 ## 常犯坑位
 
+- 🔴 **「跑完必然留痕」≠「能区分没跑完」—— 中间态静默是排障最贵的形态**（2026-09-21）。
+  实例：安装通道检测（`SettingsViewModel.runInstallChannelCheck`）按设计**只要跑完就必然写一条**
+  （成功写 `successMessage`，失败走 `finishInstallChannelCheckWithFailure` 写「LocalDevVPN 检测失败」）
+  ⇒ 我据此判定「两条都没有 ⇒ 检测从未到达结论」。**方向对，但查不下去**：
+  日志里**没有任何证据**能说出它停在哪一步、停了多久 ✗。
+  - **根因**：整条诊断链路（`MinimuxerInstallChannel.diagnose()`，约 160 行）**零埋点** ——
+    当时全文件只有 1 处 `logStore.append`，且它在**安装**路径上、与诊断无关 ✗；
+    而诊断恰好是本链路**唯一可能长时间静默**的区间（36 轮探测 ≈ 20–60 秒，隧道不通时更久）。
+  - **判据（加埋点前先问这一句）**：**「这条链路卡住时，日志里长什么样？」** ——
+    若答案与「正常但安静」同形，就必须补**中间态**留痕，而不是只留「开始 / 结束」✓。
+    同族：2026-09-17 那条「某个状态下『什么都不做』的分支，要问一句『那谁来推进这件事』」。
+  - **做法**：留痕做成**包一层**（`diagnose()` → `performDiagnose()`），不在每个 `return` 前补一句 ——
+    诊断有 6 个出口（配对缺失 / 不匹配 / 连接失败 / 探测失败 / 安装服务未就绪 / 成功），
+    逐个补迟早漏一个，**而漏掉的那个恰好是下次要查的那个** ✗。
+    出口日志带**耗时 + 逐步状态 + 失败码**（`stepsSummary` 直接说出「卡在哪一步」）✓。
+  - **连带**：`runInstallChannelCheck` 里 `markValidating()` 失败的出口**只有弹窗、没有日志**
+    ⇒ 用户看到的弹窗**不会随日志发回来** ⇒ 对排障等于静默 ✗（已补 `SEAL-PAIR-206`）。
+  - ⚠️ **`installChannel == nil` 那个出口加不了日志，别硬加**：它只在 `startupFailure` / `preview`
+    两个 init 里出现，而那两种情况下 `logStore` **也是 nil** ⇒ 写了也没用 ✗。
+    本次已**证伪**它：日志里有「已自动写入配对信息」⇒ `pairingStore` 非 nil ⇒ 走的是正常 init ✓。
+    ⇒ **别给「日志设施自己也不可用」的分支补日志** ✗。
+
 - 🔴 **「降部署目标」后要审的是 `#available` 的 else 分支，不是「有没有更高版本的 API」**（2026-09-21）。
   **部署目标本身就是编译期闸门**：未加 `#available` 的 iOS 17+ API，在部署目标 16.0 下**直接编译报错**
   ⇒ 「调了不存在的 API」这一类**编译器已经帮你挡了** ✗。**编译器挡不住的是另一类**：
@@ -553,6 +575,50 @@
 ---
 
 ## 历史记录
+
+### 2026-09-21 · iOS 16.2 真机日志诊断：给「安装通道检测」补上中间态留痕
+
+**输入**：`Seal-log (11).txt`（表头 `构建 1.2.1 (196)`，iOS 16.2 **已越狱**设备，19:24–19:35，27 行）。
+
+**已经拿到的证据（均为首次）**：
+- ✅ 构建 196 在 **iOS 16.2** 上**装上并运行**（表头有构建号）—— iOS 16 验收第 1 步，此前一直缺。
+- ✅ 配对文件**导入成功** ×3（`Seal 配对助手已自动写入配对信息，等待真实设备连接验证`）。
+- ❌ 设备**取不到**：`SEAL-PROFILE-320 … 中断于 dump，首个错误：NoDevice` ×6。
+- 🔴 **根因方向 = LocalDevVPN 隧道没连上**：`bindTunnelConfiguration()` 把设备地址写死
+  `10.7.0.1`、`probeTunnel()` 探 `10.7.0.1:62078 / 49152` ⇒ 隧道不在 ⇒ 设备「不存在」⇒ `NoDevice`。
+  ⚠️ **越狱替代不了隧道**（越狱只让 LocalDevVPN 能永久签名，这条链路仍然要它）。
+
+**查不下去的那一步（本轮真正要修的）**：日志里**既无成功行**（「LocalDevVPN 通道正常」）
+**也无失败行**（「LocalDevVPN 检测失败」），而 `importPairingAssistantInboxIfPresent`（`:1958`）
+在导入后会**自动**跑一次检测 ⇒ 3 次导入 = 3 次检测，一次都没留痕 ✗。
+- 逐行读代码后**排除** `installChannel == nil`（只在 `startupFailure` / `preview` 出现，
+  而那两种情况下 `pairingStore` 也是 nil ⇒ 连「已自动写入」都写不出来，与日志矛盾 ✗）。
+- 收敛为：**卡在 `diagnose()` 内部**，而它**整段零日志** ⇒ 「还在跑」与「已经死了」同形 ✗。
+
+**修复（`Seal/` 侧 2 文件，纯插入 74 行 / 0 删除）**：
+
+| 位置 | 加了什么 |
+|---|---|
+| `MinimuxerInstallChannel.diagnose()` | 改成**包一层**：入口 1 条 ＋ 出口 1 条（耗时 ＋ 逐步状态 ＋ 失败码）；原主体改名为 `performDiagnose()` |
+| 36 轮探测循环 | 进 / 出各 1 条（带实际轮数）⇒ 区分「卡在循环里」与「循环跑完但后面卡住」 |
+| `stepsSummary(_:)` | 新增 internal static 纯函数：把 6 步压成「设备配对=正常、VPN 通道=待检测…」一行 |
+| `SettingsViewModel.runInstallChannelCheck` | `markValidating()` **之前**加 1 条入口（与 `diagnose()` 的入口配对 ⇒ 可读出这段耗时） |
+| 同上 `markValidating()` 失败分支 | 补 `SEAL-PAIR-206` 错误日志（该出口此前**只有弹窗**） |
+
+**守卫与测试**：**R70**（3 条断言 ＋ 2 个变异锚点）—— 钉住「留痕层必须**包住**诊断主体」
+（逐个 `return` 补日志的写法会被判红）＋「逐步状态必须能压成一行」＋「必须有真单测」。
+新增 `SealTests/Installation/InstallChannelDiagnosticSummaryTests.swift`（2 个用例）。
+⚠️ `checks += 6` **一个字未动**（它补的是 `HANDOFF_GUARD` 子守卫的计数，与本文件新增断言无关）。
+
+**涉及文件**：`Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift`、
+`Seal/Features/Settings/SettingsViewModel.swift`、
+`SealTests/Installation/InstallChannelDiagnosticSummaryTests.swift`、`Scripts/verify-release-safety.py`；
+仓库外：`Seal-构建196/真机验证操作单.md`（补「怎么算连上 LocalDevVPN」＋「不要反复重导入配对文件」）。
+
+**验证状态**：⚠️ **待真机** —— 下次真机日志里应当出现这四条：
+`通道检测开始：…` → `开始探测设备响应：最多 36 轮…` → `设备探测结束：…` → `通道检测完成|未通过（耗时 …）：…`。
+**只要这四条出现**，就能直接定位是隧道、设备响应、还是配对不匹配 ✓。
+⚠️ **LocalDevVPN 是 iOS 16 / 17.0–17.3.1 这条本机配对通道的硬前置**，未连上时后续所有失败都白分析。
 
 ### 2026-09-21 · 降部署目标后的 `#available` 语义审计：全仓 4 处逐处核对
 
