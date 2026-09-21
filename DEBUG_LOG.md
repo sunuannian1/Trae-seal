@@ -574,8 +574,18 @@
 `docs/qa/device-regression-checklist.md`、`Scripts/verify-release-safety.py`、`DEBUG_LOG.md`
 
 **验证状态**：✅ 守卫 **PASS 488/253**（原 487/252 ⇒ ＋1 条检查、＋1 个变异锚点，条数自洽）；
-⏳ CI 待跑。⚠️ **iOS 16 真机验收仍是唯一有效验收** —— 本轮全部是文案/判据改动，
-**不改任何运行行为**。
+**CI 里同样是 488 / 253** ✓（逐字一致 ⇒ 本地与云端没有判据差）。
+✅ **CI 全绿**：
+- 主 `35590643245`（`Scripts/**` 命中 `push.paths` 才触发 ✓）—— `build-package` ✓（含
+  `Check release safety invariants`）／ `signer-tests` ✓ ／ `swift-regression` ✓；
+  `publish-release` 按预期 **skipped**（本分支不是发版）。
+- 助手 `35590653124`（手动 `workflow_dispatch -f full_check=true`）—— `Rust test gate` **真跑**
+  （`running 1 test` → `remote_pairing_needs_ios_17_4 ... ok`，`1 passed; 0 failed`）＋
+  `Verify upstream feature surface` ✓ ＋ `Build Windows x64 release` ✓
+  ⇒ **那句注释改动不影响注入构建** ✓（该 run 产出新 exe，但与本轮交付包里的 exe **行为相同**）。
+
+⚠️ **iOS 16 真机验收仍是唯一有效验收** —— 本轮全部是文案/判据改动，**不改任何运行行为**；
+交付包 `Seal-构建196/` 里的 IPA 与 exe **继续有效**（exe 的差异只是那句注释）。
 
 ### 2026-09-21 · 最低支持版本回到 iOS 16：**这条限制当初是人为加上去的，而理由已过期**
 
