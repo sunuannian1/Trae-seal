@@ -37,7 +37,8 @@ actor PairingStore {
             throw Self.invalidFailure
         }
 
-        // 同时支持 plist（iOS 17- Lockdown）和 JSON（iOS 17+ RemotePairing）解析
+        // 同时支持 plist（iOS 17.3.1 及以下 Lockdown，含 iOS 16）和
+        // JSON（iOS 17.4+ RemotePairing）解析
         let dictionary = try Self.parseDictionary(from: data)
         let inspection = try Self.inspect(dictionary)
 
@@ -401,7 +402,7 @@ actor PairingStore {
             return dictionary
         }
 
-        // 再尝试 JSON（iOS 17+ RemotePairing 通常为 JSON）
+        // 再尝试 JSON（iOS 17.4+ RemotePairing 通常为 JSON）
         if let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
            let dictionary = jsonObject as? [String: Any] {
             return dictionary

@@ -1990,7 +1990,10 @@ final class SettingsViewModel: ObservableObject {
     }
 
     /// 手动导入用户选择的配对文件。
-    /// 支持 iOS 17+ RemotePairing（.mobiledevicepairing / JSON）和 iOS 17- Lockdown（.plist）。
+    /// 支持 iOS 17.4+ RemotePairing（.mobiledevicepairing / JSON）和
+    /// iOS 17.3.1 及以下 Lockdown（.plist，含 iOS 16）——
+    /// ⚠️ 分界是 **17.4**（`CoreDeviceProxy` 从 17.4 才引入），**不是 17.0**：
+    /// 17.0–17.3.1 与 iOS 16 都走 Lockdown ✓。
     @discardableResult
     func importPairingFile(at sourceURL: URL) async -> Bool {
         guard let pairingStore else { return false }

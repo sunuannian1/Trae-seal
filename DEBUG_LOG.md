@@ -526,7 +526,7 @@
   （`Muxer.start` 只看配对文件有没有 `private_key`/`UDID`，一行版本判断都没有）。
 ⇒ **「不支持 iOS 16」的前提已经不存在**。
 
-**改动面：9 处部署目标声明 ＋ 1 处 `onChange` ＋ 2 处版本文案。**
+**改动面：9 处部署目标声明 ＋ 1 处 `onChange` ＋ 2 处版本文案 ＋ 3 处过期注释 ＋ 发布正文。**
 
 | 位置 | 改动 |
 |---|---|
@@ -535,6 +535,8 @@
 | `.github/workflows/ios.yml` / `ios-fast.yml` / `ios-release.yml`（各 1 处 CI 断言） | `test "$…_TARGET" = "17.0"` → `"16.0"`（🔴 **第一版漏了这三处**，见下） |
 | `SigningProgressView.swift` | `onChange(of:)` 双参数闭包 → **单参数**（iOS 17 专属重载） |
 | `AboutView.swift` / `PairingSettingsView.swift` | 版本文案 |
+| `SettingsViewModel.swift` / `PairingStore.swift`（3 处注释） | 「iOS 17+ RemotePairing / iOS 17- Lockdown」→「**17.4+ RemotePairing / 17.3.1 及以下 Lockdown（含 iOS 16）**」——⚠️ 原写法**本来就是错的**（分界是 17.4，17.0–17.3.1 也走 Lockdown），降级后更误导 |
+| `RELEASE_NOTES.md` | 1.2.1 首节补「最低支持版本下调到 iOS 16」（`MARKETING_VERSION` **仍有意未 bump**） |
 | `Tools/SealPairingAssistant/patch_upstream.py` | 注入单测补 iOS 16 用例 |
 | `.github/workflows/pairing-assistant.yml` | `required` 清单补 iOS 16 标记 |
 

@@ -216,6 +216,16 @@ Lockdown 文件照样会卡住。所以做了一次全仓审计（2026-09-20）�
 **文案**：`AboutView` 的「最低支持」→ `iOS 16.0`；`PairingSettingsView` 的配对说明改为
 「远程配对需要 iOS 17.4 及以上；iOS 17.0–17.3.1 与 iOS 16 会改用「本机配对」（Lockdown）」。
 
+**顺带修掉 3 处**已经过期**的「配对类型范围」注释**（降级后它们开始误导）：
+`SettingsViewModel.importPairingFile` 的文档注释、`PairingStore` 的两处解析注释，原文写的是
+「iOS 17+ RemotePairing / iOS 17- Lockdown」——⚠️ 这个写法**本来就是错的**（分界是 **17.4**，
+17.0–17.3.1 也走 Lockdown），加上 iOS 16 支持后更误导 ⇒ 统一改为
+「**iOS 17.4+ RemotePairing / iOS 17.3.1 及以下 Lockdown（含 iOS 16）**」。
+
+**发布正文**：`RELEASE_NOTES.md` 的 1.2.1 首节补上「最低支持版本下调到 iOS 16」
+（⚠️ `MARKETING_VERSION` **仍有意未 bump** —— 用户明确「先不发更新版本」；
+但发布正文要先写对，否则将来发布时 iOS 16 用户看不到自己被支持）。
+
 #### 更硬的那道门槛：预编译 RustBridge 已经过关
 
 「改声明就够了吗」的答案在这里：`Vendor/Minimuxer/RustBridge/lib/RustBridge.xcframework`
