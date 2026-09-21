@@ -39,7 +39,10 @@ struct SigningProgressView: View {
         // 真正的「回主页」动作由 AppsViewModel.updateSigningStage 在状态层触发 ——
         // 挂在界面上的话，用户一点「取消」关掉抽屉，触发点就跟着消失了，
         // 而安装早已交给 installd，Seal 的替换会静默失败。
-        .onChange(of: viewModel.signingSession?.status) { _, newStatus in
+        // ⚠️ 必须用**单参数**闭包：`onChange(of:) { old, new in }` 是 iOS 17 才引入的重载，
+        // 而 Seal 的部署目标已降到 iOS 16.0（2026-09-21 适配）⇒ 双参数写法在 16 上编译失败 ✗。
+        // 这里只用新值、不用旧值，所以单参数写法语义完全等价 ✓。
+        .onChange(of: viewModel.signingSession?.status) { newStatus in
             if case .running(.installing)? = newStatus,
                viewModel.signingSession?.app.isSeal == true {
                 withAnimation(.easeInOut(duration: 0.45)) {

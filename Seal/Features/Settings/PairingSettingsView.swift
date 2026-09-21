@@ -93,7 +93,7 @@ struct PairingSettingsView: View {
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("远程配对需要 iOS 17.4 及以上；iOS 17.0–17.3.1 会改用「本机配对」，iOS 16 及以下无法安装 Seal。")
+            Text("远程配对需要 iOS 17.4 及以上；iOS 17.0–17.3.1 与 iOS 16 会改用「本机配对」（Lockdown）。")
                 .font(.caption)
                 .foregroundStyle(Color.sealTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)

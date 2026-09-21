@@ -2,7 +2,7 @@ name: Seal
 options:
   createIntermediateGroups: true
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "16.0"
 configs:
   Debug: debug
   Release: release
@@ -37,7 +37,7 @@ targets:
   Seal:
     type: application
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "16.0"
     sources:
       - path: Seal
         excludes:
@@ -113,7 +113,7 @@ targets:
   DeviceSupport:
     type: library.static
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "16.0"
     dependencies:
       - package: AltSign
         product: OpenSSL
@@ -157,7 +157,7 @@ targets:
   SealTests:
     type: bundle.unit-test
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "16.0"
     sources:
       - path: SealTests
     dependencies:
@@ -170,7 +170,7 @@ targets:
   SealUITests:
     type: bundle.ui-testing
     platform: iOS
-    deploymentTarget: "17.0"
+    deploymentTarget: "16.0"
     sources:
       - path: SealUITests
     dependencies:

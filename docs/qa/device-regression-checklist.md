@@ -499,9 +499,47 @@ Apple 已经接受了密码，只是要求走第二步（输验证码）。这�
 > ⇒ **判据只能落在「用户拿得到」的通道上**（Seal 自己的日志 ＋ 界面），
 > 否则测试做完却无法判定成败。同一条规矩见 `AGENTS.md` §5「纯函数化才能测」的姊妹版。
 
-**注意**：🔴 **iOS 17.0–17.3.1 的 Lockdown 通道在 Seal 里从未跑过真机** —— 这一项是**第一次**验证它：
-文件能不能写入 Seal、能不能导入、装 App 能不能过、个性化 DDI 能不能挂上、续签能不能走通。
-**iOS 16.x 及以下不用测** —— Seal 的部署目标就是 17.0，IPA 装都装不上。
+**注意**：✅ **2026-09-21 真机验证通过 —— 全流程通**（**构建 190**，iOS 17.0–17.3.1 设备）：
+助手写入配对文件 → Seal 导入 → 通道验证 → 装 App → 点开 → **续签（含批量）全部走通** ⇒ **本项结案** ✓
+原断言「iOS 17.0–17.3.1 的 Lockdown 通道在 Seal 里从未跑过真机」**已失效**。
+
+> ⚠️ **验的是构建 190**（含 `6d990e4` 的 Lockdown 补齐，**不含** 2026-09-21 的 SC_Info 递归清理与
+> 加密包导入期拒绝）⇒ **那两个修复不在本次覆盖范围内**，仍各自需要真机验收（见构建 193 操作单）。
+> 本条验证回答的是「Lockdown 通道能不能用」，不是「那两个修复对不对」。
+
+#### ★ 16.x 通道（2026-09-21 新增 —— **首次**验证 iOS 16）
+
+**前置**：iOS 16.0–16.7.x 设备 ＋ 已装 **LocalDevVPN**（Lockdown **同样需要隧道** ——
+设备 IP 来自 `utun` 对端，「本机配对」≠「不需要隧道」）。装的是**部署目标已降到 16.0** 的构建。
+
+| # | 步骤 | 期望现象 |
+|---|---|---|
+| 1 | 助手连上设备 | 版本行显示 `16.x`；主按钮**可用**（只有「版本读不到」才禁用） |
+| 2 | 点「✦ 生成并写入 Seal」 | 走**本机配对（Lockdown）**，配对文件写入设备上**已装的 Seal** |
+| 3 | Seal 里导入配对文件 | 通过完整性校验（7 个键：`UDID` / `HostID` / `SystemBUID` ＋ 四份证书/私钥） |
+| 4 | 通道验证 | 通过（不再卡在「验证中」十几分钟） |
+| 5 | 装一个 App | 装得上、桌面出图标、**点开能打开** |
+| 6 | 续签（含批量） | 走通 |
+
+**失败判据**：任何一步失败，**导出 Seal 日志**（文件 App → 我的 iPhone → Seal → `Seal-log.txt`）
+并**注明构建号**（日志表头第二行）—— 无构建号的日志不代表当前代码。
+
+> 🔴 **iOS 16 的 Lockdown 通道从未跑过真机** ⇒ 本项是**第一次**验证它。
+> 构建 190 验的是 iOS 17.0–17.3.1，**不能替 iOS 16 背书**
+> （详见 `2026-09-20-pairing-os-support-matrix.md` §8.6）。
+> ✅ 但 iOS 16 与 17.0–17.3.1 **走的是同一条 Lockdown 路**（逐环节源码对照见该文档 §8.1）⇒ 把握度**高**。
+
+**iOS 15.x 及以下不用测** —— 助手会照常生成配对文件，但 Seal 装不上（部署目标 16.0）⇒ 无处可写。
+
+> ✅ **附带更正（2026-09-21 逐行核对）**：原先把「**个性化 DDI 能不能挂上**」列为待验项是**多余的** ——
+> **Seal 从不挂载 DDI** ✗。`Mounter.handlePre17Mount`（`major < 17`）/ `handlePost17Mount` 是
+> **SideStore 的 JIT / 调试功能**；把 `Seal/` 调用的 Minimuxer API 全列一遍（`reset`/`stageAndInstall`/
+> `isAppInstalled`/`lookupApp`/`installIpa`/`yeetAppAfc`/`ready`/`fetchUDIDDetailed`/`start`/
+> `isRemotePairing`/`describeError`/`bindTunnelConfig`）⇒ **没有 `startAutoMounter`、也不读 `dmgMounted`**。
+> ⇒ 这也是 `Seal/` 里 `major < 17` **零命中**、版本判断全在 `Vendor/Minimuxer` 的原因。
+> 装 App 走的是 AFC 暂存 ＋ instproxy（`Install.swift:51/112`），**不依赖 DDI** ✓
+> ⇒ 「iOS 16 走 pre17、与 17.0–17.3.1 的 post17 不同」这个差异**对 Seal 不成立**，
+> 详见 `2026-09-20-pairing-os-support-matrix.md` §8。
 
 **已经做过的静态审计**（见 `2026-09-20-pairing-os-support-matrix.md` §7）：装 App（`LockDownInstall`）、
 个性化 DDI 挂载（`mount_personalized_ddi`）、续签**都不依赖** iOS 17.4 的能力；

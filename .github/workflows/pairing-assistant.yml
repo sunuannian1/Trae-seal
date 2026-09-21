@@ -198,7 +198,16 @@ jobs:
             'seal_mode_for_ios(&ios_version, self.pairing_mode)',
             'let has_ios_version = ios_version != "—";',
             'has_device && has_ios_version && !is_processing',
-            '正在读取 iOS 版本…'
+            '正在读取 iOS 版本…',
+            # 2026-09-21：最低支持版本回到 iOS 16 ⇒ 助手对 16.x 必须走 Lockdown 并照常生成。
+            # ⚠️ 这两条与 `patch_upstream.py` 的 `verify()` 是**两道互相独立**的闸门 ——
+            # 只留那一道，就会出现「判据与实现一起被改掉、自洽了就算过」✗（R60b 的教训）。
+            # 放在这里的是「外部」那一道。
+            # ⚠️ 本清单跑在 `cargo fmt --all` **之后** ⇒ 只加**短片段**，
+            # 长表达式被 rustfmt 折行会误判为缺失 ⇒ 白烧一轮 CI ✗。
+            # 这两条分别约 42 / 54 字符，远低于 max_width = 100 ✓。
+            'seal_ios_supports_remote_pairing("16.0")',
+            'seal_mode_for_ios("16.0", PairingMode::RemotePairing)'
           )
           foreach ($marker in $required) {
             if (-not $source.Contains($marker)) { throw "Required feature missing: $marker" }

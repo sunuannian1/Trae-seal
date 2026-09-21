@@ -14,6 +14,13 @@
   ⚠️ 危害比「代码没写」更大：**后续排查会直接跳过这一项**（"审计过、✅ 覆盖了"）。
   - **判据**：引用能力表下结论前，`grep` 那条断言的**具体落点**（可检索的符号，
     如错误码、函数名、`throw` 语句），而不是看表格里的 ✅ ✓。
+  - ⚠️ **搜索范围必须覆盖 `build/upstream/`**（2026-09-21 实际踩到）：签名引擎是 vendored 的
+    **rork-sign**，源码在 `build/upstream/rork-sign/Sources/RorkSign/**`，而 **`build/` 不被
+    git 跟踪**（`git ls-files build/ | wc -l` = **0**，是构建时下载的）⇒ 只 `grep Seal/`
+    会得到「12 条证据里 9 条符号不存在」的**假阴性**，差点误报「文档吹牛」✗。
+    实况：那 12 条证据符号**全部真实存在**（抽查 `isWatchBundle` 确为四重判据 ✓）
+    ⇒ **那份能力表是可信的** ✓，唯一不符的「加密二进制导入时就拦」已修（`SEAL-IPA-107`）。
+  - **正确判据**：`grep -rl "<符号>" --include=*.swift . | grep -v "^\./upstream/"` ✓
   - 同族：本仓那条「『注释写着对齐上游』不等于真的对齐」（`SinfOptions` 那次）。
     ⇒ **三类自述都要独立取证：注释、文档、提交信息** ✓
 
@@ -473,9 +480,85 @@
   要么放进独立的轻量 model。**判据：这条回调一秒能来几次 × 每次会让多少 view 重算**；
   乘积 > 一屏 view 数就是错的，哪怕它"看起来更流畅"了。
 
+- **「改了部署目标」≠「能装上低版本系统」—— 依赖的**预编译**二进制各有自己的 minOS**（2026-09-21）。
+  `project.yml` / `Base.xcconfig` 只管 **App 自己**的部署目标；`Vendor/**` 里那些**预编译**的
+  `.a` / `.so`（本项目是 `Vendor/Minimuxer/RustBridge/lib/RustBridge.xcframework`）**各自带 Mach-O
+  最低系统版本**，比 Xcode 声明高时改声明也没用 —— 装到低版本设备上照样起不来 ✗。
+  ⇒ **判据：动最低支持版本之前，先把每个预编译二进制的 `LC_BUILD_VERSION.minos` 量一遍** ✓。
+  Windows 上无 `vtool` 也能做：`.a` 是 ar 归档（⚠️ **BSD 长文件名写成 `#1/<len>`、真名在 body 开头**，
+  不处理会**全部解析失败**），遍历 load command 找 `LC_BUILD_VERSION`(0x32) 的 `minos`
+  （`major<<16 | minor<<8 | patch`）。⚠️ **看最大值，别看最小值** —— Rust 的 `std`/`compiler_builtins`
+  助手对象没有版本注释、且有一批 minOS 更低（本项目 1209 个里 390 个是 10.0/14.0），那是正常的。
+  ⚠️ 同族：**「看着像 bug」的跨平台二进制先读调用点** —— `Seal/Resources/Anisette/*.so` 是
+  **ELF（Linux）**、不是 Mach-O，第一反应是「iOS 上 dlopen 不了 ⇒ 缺陷」✗，实际
+  `AnisetteClient.swift:68` 用 **Unicorn 引擎 mmap 模拟执行**，是设计 ✓。
+
 ---
 
 ## 历史记录
+
+### 2026-09-21 · 最低支持版本回到 iOS 16：**这条限制当初是人为加上去的，而理由已过期**
+
+**动机**（用户逐字）：「先不发更新版本，把 16.0 也适配 配对文件也需要成功配对设备」。
+
+**根因不是技术依赖，是一条提交的声明**。`git log -- Config/Base.xcconfig` 找到
+`9fed6f3`（2026-09-12）`chore(build): 最低支持版本提升至 iOS 17，不再支持 iOS 16`：
+
+> 「iOS 16 及以下设备无 RSD 服务，无法无线配对且安装链路（Minimuxer 硬编码 RSD）不可用」
+
+- **前半句仍成立**：iOS 16 确实没有 RSD ⇒ 不能远程配对 ⇒ 走 Lockdown（助手判定正确）。
+- **后半句已过期**：`6d990e4` 已补上 Lockdown 的安装链路（AFC ＋ instproxy）—— 这正是
+  17.0–17.3.1 能跑通的原因，而 **iOS 16 与 17.0–17.3.1 走的是同一条 Lockdown 路**
+  （`Muxer.start` 只看配对文件有没有 `private_key`/`UDID`，一行版本判断都没有）。
+⇒ **「不支持 iOS 16」的前提已经不存在**。
+
+**改动面：6 处部署目标声明 ＋ 1 处 `onChange` ＋ 2 处版本文案。**
+
+| 位置 | 改动 |
+|---|---|
+| `Config/Base.xcconfig` | `IPHONEOS_DEPLOYMENT_TARGET` 17.0 → **16.0** |
+| `project.yml` ×5（`options` 全局 ＋ 4 个 target） | `"17.0"` → `"16.0"` |
+| `SigningProgressView.swift` | `onChange(of:)` 双参数闭包 → **单参数**（iOS 17 专属重载） |
+| `AboutView.swift` / `PairingSettingsView.swift` | 版本文案 |
+| `Tools/SealPairingAssistant/patch_upstream.py` | 注入单测补 iOS 16 用例 |
+| `.github/workflows/pairing-assistant.yml` | `required` 清单补 iOS 16 标记 |
+
+> ⚠️ **`Config/Base.xcconfig` 那一处最容易漏** —— 只 grep `project.yml` 会少数一处
+> （`Debug.xcconfig` / `Release.xcconfig` 都 `#include "Base.xcconfig"`）。
+> ⚠️ **`9fed6f3` 的清单也不能照抄**：它改了 5 个文件，但 `README.md` 已在 `bd99321` 被删除、
+> `project.yml` 里 `SealTunnel` target 已被 `47d43d1` 移除（6 处 → 5 处）⇒ **必须重新 grep 真实条目数**。
+
+**更硬的那道门槛：预编译 RustBridge 已经过关**（这是「改声明就够了吗」的答案）。
+`Vendor/Minimuxer/RustBridge` 是**预编译静态库**，自带 Mach-O 最低系统版本。
+Windows 上无 `vtool` ⇒ 直接解析 ar 归档 ＋ `LC_BUILD_VERSION`：
+`ios-arm64/librust_bridge.a` **819 个对象 minOS = 16.0.0**（另 390 个 10.0.0 是 Rust 运行时助手对象），
+模拟器 slice 同 ⇒ **已是 iOS 16 可用，不需要重编** ✓。
+仓库还已有兜底设施，且 `ios.yml` **每次 CI** 都跑 `MAX_IOS_VERSION=16.0 verify-rustbridge-minos.sh`。
+
+**助手侧：它本来就不拒绝 iOS 16**。判据只有 `major > 17 || (major == 17 && minor >= 4)`
+⇒ 16.x 返回 `Some(false)` ⇒ 走 Lockdown **并照常生成**（只有「版本读不到」才禁用生成）。
+⚠️ **「助手能生成」≠「能用」** —— 配对文件要写入设备上**已装的 Seal** ⇒
+**实际可用下限由 Seal 的部署目标决定，不是助手**（iOS 15.x 及以下生成得出、但无处可写）。
+
+**守卫（R68 ＋ R69）**：R68 钉住 6 处部署目标 ＋「`project.yml` 里不许再出现 `17.0`」；
+R69 钉住助手 iOS 16 标记的**两道独立闸门**（`patch_upstream.py` ＋ workflow）。
+⚠️ 助手那两道闸门**在本分支（`fix/**`）上都不会自动跑**（`on.push.branches` 只有 `main`/`feature/**`）
+⇒ **R69 是本分支上唯一会跑的那道**。
+
+**涉及文件**：`Config/Base.xcconfig`、`project.yml`、`Seal/Features/Apps/SigningProgressView.swift`、
+`Seal/Features/Settings/AboutView.swift`、`Seal/Features/Settings/PairingSettingsView.swift`、
+`Scripts/verify-release-safety.py`、`Tools/SealPairingAssistant/patch_upstream.py`、
+`.github/workflows/pairing-assistant.yml`、`docs/qa/2026-09-20-pairing-os-support-matrix.md`（§8.5 / §8.6）、
+`docs/qa/device-regression-checklist.md`。
+
+**验证状态**：⚠️ **未编译**（Windows 本机无 Swift 工具链）。本地守卫全量（含变异）**PASS**：
+`Source regression checks: 481` ＋ `Guard mutation checks: 250` —— 新增量正好是 R68 的 4 条 ＋
+R69 的 2×2 条运行时断言与 **3 个变异锚点**（⇒ 新守卫真的在跑，不是空挂 ✓）。
+🔴 **真机验收仍是唯一验收条件**：**iOS 16 的 Lockdown 通道从未跑过真机**
+（构建 190 验的是 17.0–17.3.1，**不能替它背书**）；验收步骤见回归清单「★ 16.x 通道」。
+
+**有意未做**：`MARKETING_VERSION` **未 bump** —— 用户明确「先不发更新版本」。
+⚠️ 将来要让用户**检测到**这次支持范围的变化必须 bump（内置更新只比版本串）。
 
 ### 2026-09-21 · 未砸壳的加密 IPA：从「只警告」升级为导入期拒绝
 
@@ -502,8 +585,9 @@
 **涉及文件**：`Seal/Core/Import/IPAParserService.swift`、`docs/qa/log-code-index.md`
 （新增「导入 / IPA 校验」段）、`Scripts/verify-release-safety.py`（R67 ＋ 2 个变异锚点）。
 
-**验证状态**：⚠️ 待真机 —— 拿一个 App Store 原版（未砸壳）IPA 导入 ⇒
-应在**导入期**就被拒并显示 `SEAL-IPA-107`。
+**验证状态**：🟡 **部分验证**（2026-09-21，**构建 193**，iOS 17.0–17.3.1 设备）——
+**反向已验** ✓：已砸壳的「源阅读」IPA 正常导入 → 安装 → **点开能打开** ⇒ 新拦截**没有误伤**；
+**正向未验** ⚠️：仍需一个 App Store 原版（未砸壳）IPA 导入 ⇒ 应在**导入期**被拒并显示 `SEAL-IPA-107`。
 
 **顺带修**：`checks += 14` → `checks += 6`（上一轮我按错误规则改的，见「常犯坑位」）。
 
@@ -541,12 +625,17 @@
 `SealTests/Installation/InstallChannelDiagnosticClassificationTests.swift`、
 `docs/qa/log-code-index.md`、`Scripts/verify-release-safety.py`（R65 / R66）。
 
-**验证状态**：⚠️ **待真机**。守卫 R65 / R66 本地跑；编译与单测需 CI
-（`build-package` 不编译测试 target，测试问题看 `swift-regression`）。
-**真机验收**：拿同一个「源阅读」IPA 重签安装 ⇒ 应装得上且打得开，
-日志里不该再出现 `ApplicationSINFCaptureFailed`。
-⚠️ 若该 IPA 主二进制 `cryptid != 0`（未砸壳），装上也**启动即闪退**
-（`set_code_unprotect() error 7`）—— 那是另一个问题（需先砸壳），本修复不覆盖。
+**验证状态**：✅ **2026-09-21 真机验收通过**（**构建 193**，iOS 17.0–17.3.1 设备）——
+拿同一个「源阅读」IPA 重签安装 ⇒ **装得上、点开也能正常打开** ✓
+⇒ 原症状「有图标点不开」消失，日志未再出现 `ApplicationSINFCaptureFailed`。
+（守卫 R65 / R66 本地跑；编译与单测在 CI —— `build-package` 不编译测试 target，
+测试问题看 `swift-regression`。）
+
+**同批另一修复的副作用核对**：该 IPA **没有被 `SEAL-IPA-107` 拦下** ⇒ 说明它**是已砸壳的**
+⇒ 同时构成 `feabd12`（加密包导入期拒绝）的**反向验证：已砸壳的包不会被误伤** ✓
+⚠️ 但 `SEAL-IPA-107` 的**正向**（拦得住未砸壳包）**仍未验** —— 需要一个主二进制
+`cryptid != 0` 的 IPA；且那种包装上也**启动即闪退**（`set_code_unprotect() error 7`），
+属另一个问题（需先砸壳），本修复不覆盖。
 
 ### 2026-09-21 · 配对助手的校验清单：哈希对，但 `-c` 跑不通（编码修了，行尾没修）
 

@@ -3484,6 +3484,74 @@ def violations(load=read):
           "R67: `isEncryptedBinary` 只应保留**拒绝路径**这一个调用点 ✗ —— "
           "多处调用会让「拦不拦」取决于哪一处先跑")
 
+    # R68: 最低支持版本必须统一为 iOS 16.0，六处声明一处都不许漏回 17.0（2026-09-21）。
+    #
+    # 背景：`9fed6f3`（2026-09-12）曾把最低版本提到 17，理由是「iOS 16 及以下设备无 RSD 服务，
+    # 无法无线配对且安装链路（Minimuxer 硬编码 RSD）不可用」—— 而后来的 `6d990e4` 补上了
+    # Lockdown 安装（AFC + instproxy），且 iOS 16 与 17.0–17.3.1 **走同一条 Lockdown 路**
+    # （`Muxer.start` 只看配对文件有没有 `private_key`/`UDID`，零版本判断）
+    # ⇒ 该理由**已过期** ⇒ 恢复 16.0。
+    #
+    # ⚠️ 为什么必须钉住**每一处**，而不是「文件里出现过 16.0」：
+    #   部署目标分散在 **1 个 xcconfig + 5 个 project.yml 声明**上（options 全局 ＋ 4 个 target），
+    #   漏掉任意一处 ⇒ 那个 target 仍按 17.0 编译 ⇒ **装到 iOS 16 设备上起不来** ✗。
+    #   而本机**无 Swift 工具链**，这类问题只能靠云 CI 暴露 ⇒ 守卫是唯一能提前拦住的地方 ✓。
+    #   ⚠️ `Config/Base.xcconfig` 那一处**最容易漏** —— 只 grep `project.yml` 会少数一处 ✗。
+    #
+    # ⚠️ 为什么用「计数 ＋ 禁 17.0」而不是逐个 target 切块：
+    #   `section()` 的止标记若是 `\n  ` 这种短前缀，会被 target 内部 4 空格缩进的行误命中
+    #   ⇒ 切出来的块是空的 ⇒ 断言退化成「整段里有没有这个串」✗（正是「取函数体只能用
+    #   section()、且标记要能限定范围」那条坑）。计数式断言对「删掉一个 target」同样会红
+    #   （4 → 3）✓，且不依赖缩进形状 ✓。
+    base_xcconfig = load("Config/Base.xcconfig")
+    check("IPHONEOS_DEPLOYMENT_TARGET = 16.0" in base_xcconfig,
+          "R68: `Config/Base.xcconfig` 的 `IPHONEOS_DEPLOYMENT_TARGET` 必须是 16.0 ✗ —— "
+          "Debug/Release 两个配置都 `#include` 它，漏了这处两个配置会一起按 17.0 编")
+    project_yml = load("project.yml")
+    check('deploymentTarget:\n    iOS: "16.0"' in project_yml,
+          "R68: `project.yml` 的 `options.deploymentTarget.iOS` 必须是 16.0 ✗ —— "
+          "它是全部 target 的默认值")
+    check(project_yml.count('deploymentTarget: "16.0"') == 4,
+          "R68: `project.yml` 里 4 个 target（Seal / DeviceSupport / SealTests / SealUITests）"
+          "的部署目标必须**都是** 16.0 ✗ —— 漏一个，那个 target 就装不上 iOS 16；"
+          "新增或删除 target 时请同步这个数字")
+    check('"17.0"' not in project_yml,
+          "R68: `project.yml` 里不许再出现 17.0 ✗ —— 恢复 iOS 16 支持后，"
+          "任何一处 17.0 都会让对应 target 在 iOS 16 设备上装不上")
+
+    # R69: 配对助手的「按设备版本分流」必须**两侧同时**钉住 iOS 16（2026-09-21）。
+    #
+    # 助手对 iOS 16 的行为是「本机配对（Lockdown）＋ 照常生成配对文件」—— 这一条
+    # **没有任何真机验证记录**（iOS 17.0–17.3.1 已验、16 未验）⇒ 只能靠判据钉住。
+    #
+    # ⚠️ 为什么必须是**两处**：`patch_upstream.py` 的 `verify()` 与
+    # `.github/workflows/pairing-assistant.yml` 的 `required` 清单是**两道互相独立**的闸门。
+    # 只留 patch 那一道 = **自洽判据** —— 实现与判据一起被改掉照样绿 ✗（R60b 的教训）。
+    # ⚠️ 而且**这两道闸门在本分支（`fix/**`）上都不会自动跑** ——
+    # `pairing-assistant.yml` 的 `on.push.branches` 只有 `main` 与 `feature/**`
+    # ⇒ **守卫这一条是唯一会在本分支上跑的那道** ✓。
+    #
+    # ⚠️ 标记必须是**短片段**：workflow 那份清单跑在 `cargo fmt --all` **之后**，
+    # 长表达式被 rustfmt 折行会**误判为缺失** ⇒ 白烧一轮 CI ✗。
+    # 这里选的 `seal_ios_supports_remote_pairing("16.0")`（约 42 字符）与
+    # `seal_mode_for_ios("16.0", PairingMode::RemotePairing)`（约 54 字符）都远低于
+    # rustfmt 默认 `max_width = 100`，不会被折 ✓。
+    assistant_markers = (
+        'seal_ios_supports_remote_pairing("16.0")',
+        'seal_mode_for_ios("16.0", PairingMode::RemotePairing)',
+    )
+    assistant_patch = load("Tools/SealPairingAssistant/patch_upstream.py")
+    for marker in assistant_markers:
+        check(marker in assistant_patch,
+              "R69: `patch_upstream.py` 注入的 Rust 单测必须覆盖 iOS 16 ✗（缺 `"
+              + marker + "`）—— 助手对 iOS 16 没有真机验证记录，判据是唯一的凭证")
+    assistant_workflow = load(".github/workflows/pairing-assistant.yml")
+    for marker in assistant_markers:
+        check(marker in assistant_workflow,
+              "R69: 助手 workflow 的 `required` 清单必须**独立**钉住 iOS 16 ✗（缺 `"
+              + marker + "`）—— 只留 `patch_upstream.py` 那一道就是自洽判据，"
+              "实现与判据一起被改掉照样绿")
+
     handoff_failures = HANDOFF_GUARD["violations"](load)
     checks += 6
     failures.extend(handoff_failures)
@@ -5058,6 +5126,26 @@ def main():
          r'                "缺少 \(key) 时不应判定为完整的 Lockdown 配对文件"',
          "                key",
          "#expect must not pass a bare identifier as its comment"),
+        # R68: 把全局默认改回 17.0 ⇒ 所有 target 一起退回 iOS 17（本轮要守的核心）✓ 报红。
+        ("Config/Base.xcconfig",
+         "IPHONEOS_DEPLOYMENT_TARGET = 16.0",
+         "IPHONEOS_DEPLOYMENT_TARGET = 17.0",
+         "R68:"),
+        # R68: **只**把 Seal 这一个 target 改回 17.0 —— 这是「漏改一处」的真实形态，
+        # 比整份退回更隐蔽（其它三个 target 还是 16.0，粗看像没事）✓ 报红。
+        # ⚠️ 锚点带上 target 名与 `type: application`：`deploymentTarget: "16.0"`
+        # 在文件里出现 4 次，只写它虽然也能命中（`replace(…, 1)` 取第一个），
+        # 但带上下文能保证**变异打在 Seal 这个 target 上**、与注释一致 ✓。
+        ("project.yml",
+         '  Seal:\n    type: application\n    platform: iOS\n    deploymentTarget: "16.0"',
+         '  Seal:\n    type: application\n    platform: iOS\n    deploymentTarget: "17.0"',
+         "R68:"),
+        # R69: 把 iOS 16 用例从 workflow 的 `required` 清单里删掉 ⇒ 「外部」那道闸门失效，
+        # 只剩 `patch_upstream.py` 自己那份 = 自洽判据 ✓ 报红。
+        (".github/workflows/pairing-assistant.yml",
+         "            'seal_ios_supports_remote_pairing(\"16.0\")',\n",
+         "",
+         "R69:"),
     ]
     # 变异检查每一遍都会把所有源文件**重新读一遍**：200+ 文件 × 90 多遍 ≈ 2 万次磁盘读。
     # 本仓在 OneDrive 同步目录里，单次读延迟不稳定 —— 实测同一份代码整轮耗时在
