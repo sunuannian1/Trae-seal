@@ -583,7 +583,15 @@ R69 钉住助手 iOS 16 标记的**两道独立闸门**（`patch_upstream.py` �
 （⇒ 新守卫真的在跑，不是空挂 ✓）。
 🔴 **第一版 R68 只有 481 / 250，推上去 CI 仍红** —— 因为守卫漏了 CI 断言那三处，
 本地绿拦不住 CI 红。**这一条本身就是「守卫绿 ≠ 判据完整」的实证**（见「常犯坑位」）。
-✅ 补齐后 `build-package` 的 `Verify deployment targets` 应转绿（待本轮 CI 确认）。
+✅ 补齐后 **CI 已全绿**（run `35585532562` = **构建 195**，提交 `f5abcc1`）：
+`build-package` ✓（含 `Verify deployment targets` ✓、`Verify vendored RustBridge supports iOS 16` ✓）
+／ `swift-regression` ✓（**Swift 单测与 UI 回归在部署目标 16.0 下全过** ⇒ 单参数 `onChange` 改法有效、
+无其它 iOS 17 专属 API）／ `signer-tests` ✓／`publish-release` 按预期 skipped。
+🔬 **产物自证**（比读源文件更强的证据）：`Payload/Seal.app/Info.plist` 实测
+`MinimumOSVersion = 16.0`、`CFBundleVersion = 195`、`CFBundleShortVersionString = 1.2.1`、
+`CFBundleIdentifier = com.mjorb.seal` ✓。
+📦 交付包已备好：`C:\Users\DMJ\OneDrive\Desktop\Seal-构建195\`（IPA ＋ 新配对助手 ＋
+`真机验证操作单.md`，两份 sha256 清单已自测 `OK`）。
 🔴 **真机验收仍是唯一验收条件**：**iOS 16 的 Lockdown 通道从未跑过真机**
 （构建 190 验的是 17.0–17.3.1，**不能替它背书**）；验收步骤见回归清单「★ 16.x 通道」。
 
