@@ -94,7 +94,7 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Verify Seal minimum deployment target remains iOS 17
+      - name: Verify Seal minimum deployment target remains iOS 16
         run: |
           TARGET="$(xcodebuild \
             -project Seal.xcodeproj \
@@ -103,7 +103,9 @@ jobs:
             -sdk iphonesimulator \
             -showBuildSettings | awk -F ' = ' '/^[[:space:]]*IPHONEOS_DEPLOYMENT_TARGET = / { print $2; exit }')"
           echo "Seal IPHONEOS_DEPLOYMENT_TARGET=$TARGET"
-          test "$TARGET" = "17.0"
+          # ⚠️ 与 Config/Base.xcconfig 的 IPHONEOS_DEPLOYMENT_TARGET 必须一致；
+          # 三份 workflow（ios / ios-fast / ios-release）各有一处同样的断言，改一处要三处同改。
+          test "$TARGET" = "16.0"
 
       - name: Refresh local SPM binary artifacts (避免缓存旧版 RustBridge 静态库)
         run: |

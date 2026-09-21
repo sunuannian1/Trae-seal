@@ -492,6 +492,20 @@
   ⚠️ 同族：**「看着像 bug」的跨平台二进制先读调用点** —— `Seal/Resources/Anisette/*.so` 是
   **ELF（Linux）**、不是 Mach-O，第一反应是「iOS 上 dlopen 不了 ⇒ 缺陷」✗，实际
   `AnisetteClient.swift:68` 用 **Unicorn 引擎 mmap 模拟执行**，是设计 ✓。
+- **「守卫全绿」≠「判据完整」—— 守卫没钉住的地方，绿是假的**（2026-09-21）。
+  降最低支持版本时，守卫 **R68** 本地全绿（481 条全 PASS），推上去 CI 却红了：
+  `.github/workflows/ios.yml` 里有一句硬编码 `test "$SEAL_TARGET" = "17.0"`，
+  **三份 workflow 各一处** ⇒ `build-package` 在 `Verify deployment targets` 步骤失败 ✗。
+  - **根因不是「没查」，是「查法有洞」**：① `AGENTS.md` 里本来就写着
+    「CI 校验 `IPHONEOS_DEPLOYMENT_TARGET=17.0`；**改部署目标时同步查三份 workflow 的断言**」，
+    我核对 `AGENTS.md` 时的结论却是「无最低版本相关表述」✗ —— **把最该看的那行漏了**；
+    ② 守卫当初只钉 Xcode 声明、**没钉 CI 断言** ⇒ 本地绿、CI 红，两者不矛盾。
+  - ⇒ **判据：动一个「分散在多处的常量」之前，先全仓 grep 它的字面量**
+    （`grep -rn '17\.0' --include=*.yml --include=*.xcconfig --include=*.sh …`），
+    而不是只查你以为的那几处 ✓。**「CI 里有没有反向断言」必须自己去 grep，
+    不能假设「守卫覆盖了」** —— 守卫是人写的，它的盲区就是你的盲区 ✗。
+  - 同族：本仓那条「『文档写着已覆盖 ✅』≠『代码真的做了』」（R67 那次）。
+    ⇒ **「守卫绿」「文档写了」「注释写着」三类自述都要独立取证** ✓
 
 ---
 
@@ -512,12 +526,13 @@
   （`Muxer.start` 只看配对文件有没有 `private_key`/`UDID`，一行版本判断都没有）。
 ⇒ **「不支持 iOS 16」的前提已经不存在**。
 
-**改动面：6 处部署目标声明 ＋ 1 处 `onChange` ＋ 2 处版本文案。**
+**改动面：9 处部署目标声明 ＋ 1 处 `onChange` ＋ 2 处版本文案。**
 
 | 位置 | 改动 |
 |---|---|
 | `Config/Base.xcconfig` | `IPHONEOS_DEPLOYMENT_TARGET` 17.0 → **16.0** |
 | `project.yml` ×5（`options` 全局 ＋ 4 个 target） | `"17.0"` → `"16.0"` |
+| `.github/workflows/ios.yml` / `ios-fast.yml` / `ios-release.yml`（各 1 处 CI 断言） | `test "$…_TARGET" = "17.0"` → `"16.0"`（🔴 **第一版漏了这三处**，见下） |
 | `SigningProgressView.swift` | `onChange(of:)` 双参数闭包 → **单参数**（iOS 17 专属重载） |
 | `AboutView.swift` / `PairingSettingsView.swift` | 版本文案 |
 | `Tools/SealPairingAssistant/patch_upstream.py` | 注入单测补 iOS 16 用例 |
@@ -527,6 +542,14 @@
 > （`Debug.xcconfig` / `Release.xcconfig` 都 `#include "Base.xcconfig"`）。
 > ⚠️ **`9fed6f3` 的清单也不能照抄**：它改了 5 个文件，但 `README.md` 已在 `bd99321` 被删除、
 > `project.yml` 里 `SealTunnel` target 已被 `47d43d1` 移除（6 处 → 5 处）⇒ **必须重新 grep 真实条目数**。
+>
+> 🔴 **第 7–9 处是漏过一次才补上的**（白烧一轮 CI）：第一版只改了 1–6，
+> `build-package` 在 `Verify deployment targets` 步骤红 ✗。三份 workflow 各有一句
+> `test "$…_TARGET" = "17.0"`，它们跑 `xcodebuild -showBuildSettings` 断言**生成产物**，
+> 强度**高于**读 `project.yml` ⇒ 不能删、只能跟着改。
+> 根因见「常犯坑位」新增的「『守卫全绿』≠『判据完整』」那条 —— `AGENTS.md` 早就写了
+> 「改部署目标时同步查三份 workflow 的断言」，是我核对时漏了那行。
+> ⇒ 守卫 **R68 已扩到全部 9 处**（＋2 个变异锚点覆盖 CI 断言这条新路径）。
 
 **更硬的那道门槛：预编译 RustBridge 已经过关**（这是「改声明就够了吗」的答案）。
 `Vendor/Minimuxer/RustBridge` 是**预编译静态库**，自带 Mach-O 最低系统版本。
@@ -540,7 +563,8 @@ Windows 上无 `vtool` ⇒ 直接解析 ar 归档 ＋ `LC_BUILD_VERSION`：
 ⚠️ **「助手能生成」≠「能用」** —— 配对文件要写入设备上**已装的 Seal** ⇒
 **实际可用下限由 Seal 的部署目标决定，不是助手**（iOS 15.x 及以下生成得出、但无处可写）。
 
-**守卫（R68 ＋ R69）**：R68 钉住 6 处部署目标 ＋「`project.yml` 里不许再出现 `17.0`」；
+**守卫（R68 ＋ R69）**：R68 钉住 **9 处**部署目标（1 个 xcconfig ＋ 5 个 `project.yml` 声明
+＋ **3 份 workflow 的 CI 断言**）＋「`project.yml` 里不许再出现 `17.0`」＋ 各 workflow 里不许再有 `= "17.0"`；
 R69 钉住助手 iOS 16 标记的**两道独立闸门**（`patch_upstream.py` ＋ workflow）。
 ⚠️ 助手那两道闸门**在本分支（`fix/**`）上都不会自动跑**（`on.push.branches` 只有 `main`/`feature/**`）
 ⇒ **R69 是本分支上唯一会跑的那道**。
@@ -548,12 +572,18 @@ R69 钉住助手 iOS 16 标记的**两道独立闸门**（`patch_upstream.py` �
 **涉及文件**：`Config/Base.xcconfig`、`project.yml`、`Seal/Features/Apps/SigningProgressView.swift`、
 `Seal/Features/Settings/AboutView.swift`、`Seal/Features/Settings/PairingSettingsView.swift`、
 `Scripts/verify-release-safety.py`、`Tools/SealPairingAssistant/patch_upstream.py`、
-`.github/workflows/pairing-assistant.yml`、`docs/qa/2026-09-20-pairing-os-support-matrix.md`（§8.5 / §8.6）、
+`.github/workflows/pairing-assistant.yml`、`.github/workflows/ios.yml`、`.github/workflows/ios-fast.yml`、
+`.github/workflows/ios-release.yml`、`AGENTS.md`（第 196 行那条「9 处」说明）、
+`docs/qa/2026-09-20-pairing-os-support-matrix.md`（§8.5 / §8.6）、
 `docs/qa/device-regression-checklist.md`。
 
 **验证状态**：⚠️ **未编译**（Windows 本机无 Swift 工具链）。本地守卫全量（含变异）**PASS**：
-`Source regression checks: 481` ＋ `Guard mutation checks: 250` —— 新增量正好是 R68 的 4 条 ＋
-R69 的 2×2 条运行时断言与 **3 个变异锚点**（⇒ 新守卫真的在跑，不是空挂 ✓）。
+`Source regression checks: 487` ＋ `Guard mutation checks: 252` —— 相对上一版（481 / 250）
+新增量正好是 **R68 的 4 ＋ 6 条**（6 = 3 份 workflow × 2 条）＋ **5 个变异锚点**
+（⇒ 新守卫真的在跑，不是空挂 ✓）。
+🔴 **第一版 R68 只有 481 / 250，推上去 CI 仍红** —— 因为守卫漏了 CI 断言那三处，
+本地绿拦不住 CI 红。**这一条本身就是「守卫绿 ≠ 判据完整」的实证**（见「常犯坑位」）。
+✅ 补齐后 `build-package` 的 `Verify deployment targets` 应转绿（待本轮 CI 确认）。
 🔴 **真机验收仍是唯一验收条件**：**iOS 16 的 Lockdown 通道从未跑过真机**
 （构建 190 验的是 17.0–17.3.1，**不能替它背书**）；验收步骤见回归清单「★ 16.x 通道」。
 

@@ -3484,7 +3484,7 @@ def violations(load=read):
           "R67: `isEncryptedBinary` 只应保留**拒绝路径**这一个调用点 ✗ —— "
           "多处调用会让「拦不拦」取决于哪一处先跑")
 
-    # R68: 最低支持版本必须统一为 iOS 16.0，六处声明一处都不许漏回 17.0（2026-09-21）。
+    # R68: 最低支持版本必须统一为 iOS 16.0，**九处**声明一处都不许漏回 17.0（2026-09-21）。
     #
     # 背景：`9fed6f3`（2026-09-12）曾把最低版本提到 17，理由是「iOS 16 及以下设备无 RSD 服务，
     # 无法无线配对且安装链路（Minimuxer 硬编码 RSD）不可用」—— 而后来的 `6d990e4` 补上了
@@ -3493,10 +3493,19 @@ def violations(load=read):
     # ⇒ 该理由**已过期** ⇒ 恢复 16.0。
     #
     # ⚠️ 为什么必须钉住**每一处**，而不是「文件里出现过 16.0」：
-    #   部署目标分散在 **1 个 xcconfig + 5 个 project.yml 声明**上（options 全局 ＋ 4 个 target），
-    #   漏掉任意一处 ⇒ 那个 target 仍按 17.0 编译 ⇒ **装到 iOS 16 设备上起不来** ✗。
-    #   而本机**无 Swift 工具链**，这类问题只能靠云 CI 暴露 ⇒ 守卫是唯一能提前拦住的地方 ✓。
+    #   部署目标分散在 **1 个 xcconfig ＋ 5 个 project.yml 声明 ＋ 3 份 workflow 的 CI 断言**上，
+    #   漏掉任意一处 ⇒ 那个 target 仍按 17.0 编译 ⇒ **装到 iOS 16 设备上起不来** ✗，
+    #   或者 CI 自己把已降级的构建**判为失败** ✗。而本机**无 Swift 工具链**，
+    #   这类问题只能靠云 CI 暴露 ⇒ 守卫是唯一能提前拦住的地方 ✓。
     #   ⚠️ `Config/Base.xcconfig` 那一处**最容易漏** —— 只 grep `project.yml` 会少数一处 ✗。
+    #
+    # 🔴 **2026-09-21 实际踩到，本条的由来**：我第一版 R68 只钉了 Xcode 声明（6 处），
+    #   把 `AGENTS.md` 里那句「CI 校验 `IPHONEOS_DEPLOYMENT_TARGET=17.0`；改部署目标时
+    #   同步查三份 workflow 的断言」当成了「无最低版本相关表述」⇒ **漏掉三份 workflow 里
+    #   的 `test "$…_TARGET" = "17.0"`** ⇒ 推上去 `build-package` 在
+    #   `Verify deployment targets` 步骤红 ✗（白烧一轮 CI，而本地守卫全绿 —— 因为守卫
+    #   **当初就没钉这三处**）。⇒ **教训：守卫绿 ≠ 判据完整**；「CI 里有没有反向断言」
+    #   必须自己去 grep，不能假设「守卫覆盖了」。这里补上，并各配一个变异锚点。
     #
     # ⚠️ 为什么用「计数 ＋ 禁 17.0」而不是逐个 target 切块：
     #   `section()` 的止标记若是 `\n  ` 这种短前缀，会被 target 内部 4 空格缩进的行误命中
@@ -3518,6 +3527,29 @@ def violations(load=read):
     check('"17.0"' not in project_yml,
           "R68: `project.yml` 里不许再出现 17.0 ✗ —— 恢复 iOS 16 支持后，"
           "任何一处 17.0 都会让对应 target 在 iOS 16 设备上装不上")
+
+    # R68（续）：三份 workflow 各有一处**硬编码**的 CI 断言
+    #   `test "$…_TARGET" = "16.0"`（`ios.yml` 在 `Verify deployment targets`，
+    #   `ios-fast.yml` / `ios-release.yml` 在 `Verify Seal minimum deployment target …`）。
+    #   它们与 Xcode 声明是**两套独立的判据**：声明改了而这里没改 ⇒ CI 红；
+    #   这里改了而声明没改 ⇒ CI 也红 ⇒ 必须**九处同改** ✓。
+    #   ⚠️ 断言的是 `xcodebuild -showBuildSettings` 的**产物**（不是读源文件）
+    #   ⇒ 它真正验证了「生成的 Xcode 工程里部署目标就是 16.0」，
+    #   比读 `project.yml` 更强 —— 所以不能删，只能跟着改 ✓。
+    deployment_assertions = (
+        (".github/workflows/ios.yml", 'test "$SEAL_TARGET" = "16.0"'),
+        (".github/workflows/ios-fast.yml", 'test "$TARGET" = "16.0"'),
+        (".github/workflows/ios-release.yml", 'test "$TARGET" = "16.0"'),
+    )
+    for workflow_path, expected_assertion in deployment_assertions:
+        workflow_text = load(workflow_path)
+        check(expected_assertion in workflow_text,
+              "R68: `" + workflow_path + "` 的部署目标断言必须是 `" + expected_assertion + "` ✗ —— "
+              "三份 workflow 各有一处，改一处要三处同改；漏了 `build-package` 会在 "
+              "`Verify deployment targets` 步骤红（2026-09-21 实际踩到）")
+        check('= "17.0"' not in workflow_text,
+              "R68: `" + workflow_path + "` 里不许再有 `= \"17.0\"` 断言 ✗ —— "
+              "它会把已经降到 16.0 的构建判为失败")
 
     # R69: 配对助手的「按设备版本分流」必须**两侧同时**钉住 iOS 16（2026-09-21）。
     #
@@ -5146,6 +5178,20 @@ def main():
          "            'seal_ios_supports_remote_pairing(\"16.0\")',\n",
          "",
          "R69:"),
+        # R68（CI 断言那条新路径）：把 `ios.yml` 的部署目标断言改回 17.0 ⇒ 原样重演
+        # 2026-09-21 那次 `build-package` 在 `Verify deployment targets` 步骤红 ✓。
+        # ⚠️ 这条锚点是**当初漏掉的那类判据**的守卫 —— 本地守卫当初全绿也照样红 CI，
+        # 正是「守卫没钉 = 判据不完整」的实证。
+        (".github/workflows/ios.yml",
+         'test "$SEAL_TARGET" = "16.0"',
+         'test "$SEAL_TARGET" = "17.0"',
+         "R68:"),
+        # R68（CI 断言那条新路径）：`ios-fast.yml` 用的是**另一个变量名**（`$TARGET`），
+        # 单独一条锚点确保循环里三个分支都被真的走过（只锚 `ios.yml` 会漏掉变量名差异）✓。
+        (".github/workflows/ios-fast.yml",
+         'test "$TARGET" = "16.0"',
+         'test "$TARGET" = "17.0"',
+         "R68:"),
     ]
     # 变异检查每一遍都会把所有源文件**重新读一遍**：200+ 文件 × 90 多遍 ≈ 2 万次磁盘读。
     # 本仓在 OneDrive 同步目录里，单次读延迟不稳定 —— 实测同一份代码整轮耗时在

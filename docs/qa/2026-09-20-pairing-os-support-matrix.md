@@ -4,7 +4,8 @@
 > 复核方法见第六节 —— **别把它当永久真理**。
 > **2026-09-21 追加**：§5.2 的 Lockdown 通道**已真机验证通过**（构建 190）；
 > 新增 **§8「iOS 16 能不能走同一条路」**（链路同构审计 ＋ 降级门槛审计）。
-> **2026-09-21 再追加**：§8 的结论**已落地** —— 部署目标 17.0 → **16.0**（**6 处**声明），
+> **2026-09-21 再追加**：§8 的结论**已落地** —— 部署目标 17.0 → **16.0**（**9 处**声明 =
+> 6 处 Xcode 声明 ＋ 3 份 workflow 的 CI 断言），
 > 见 **§8.5 落地记录**。⚠️ **iOS 16 真机仍未验**（见 §8.6）。
 
 ## 一、结论
@@ -151,7 +152,8 @@ Lockdown 文件照样会卡住。所以做了一次全仓审计（2026-09-20）�
 | 仅剩两处 | ① `GlassSurface.swift:19` 的 `.glassEffect` **已在 `#available(iOS 26.0, *)` 内** ✓ 安全；② `onChange(of:)` 的**双参数闭包写法**（iOS 17 才有的重载）⇒ **已改为单参数**（见 §8.5）|
 | 外部依赖 | 上游 **SideStore README 明写 iOS 14+**（xcodeproj 15.0）—— Seal 的安装链路来源；**LocalDevVPN 要求 iOS 14.0+**（官方 README）⇒ 都覆盖 iOS 16 ✓ |
 
-⇒ **「装不上 iOS 16」纯粹是 6 处声明（`Config/Base.xcconfig` 1 处 ＋ `project.yml` 5 处），不是技术依赖** ✓
+⇒ **「装不上 iOS 16」纯粹是 9 处声明（`Config/Base.xcconfig` 1 处 ＋ `project.yml` 5 处
+＋ 三份 workflow 各 1 处 CI 断言），不是技术依赖** ✓
 （`SWIFT_VERSION = 6.0` ＋ strict concurrency 是**编译期**设置，与运行时最低版本无关。）
 
 ### 8.4 把握度与剩余未知
@@ -168,23 +170,43 @@ Lockdown 文件照样会卡住。所以做了一次全仓审计（2026-09-20）�
    （Seal 有 onboarding 引导 `enableDeveloperMode`，但从未在 16 上跑过）；
 3. iOS 16 的 installd 对开发者签名包的校验行为。
 
-**结论**：要支持 iOS 16，改动面很小（**6 处部署目标声明 ＋ 1 处 `onChange` ＋ 2 处版本文案**），
+**结论**：要支持 iOS 16，改动面很小（**9 处部署目标声明 ＋ 1 处 `onChange` ＋ 2 处版本文案**），
 **但验收只能靠真机** —— 不能拿 17.0–17.3.1 的通过去替 iOS 16 背书。
 
 ### 8.5 落地记录（2026-09-21）
 
-**部署目标 17.0 → 16.0**，共 **6 处** —— 漏掉任意一处，那个 target 仍按 17.0 编译，
-装到 iOS 16 设备上就起不来（而本机无 Swift 工具链，只能靠云 CI 暴露）：
+**部署目标 17.0 → 16.0**，共 **9 处** —— 漏掉任意一处，要么那个 target 仍按 17.0 编译
+（装到 iOS 16 设备上起不来），要么 **CI 自己把已降级的构建判为失败**（本机无 Swift 工具链，
+两类问题都只能靠云 CI 暴露）：
 
 | # | 位置 | 原值 | 现值 |
 |---|---|---|---|
 | 1 | `Config/Base.xcconfig` | `IPHONEOS_DEPLOYMENT_TARGET = 17.0` | `16.0` |
 | 2 | `project.yml` → `options.deploymentTarget.iOS` | `"17.0"` | `"16.0"` |
 | 3–6 | `project.yml` → `Seal` / `DeviceSupport` / `SealTests` / `SealUITests` | `"17.0"` | `"16.0"` |
+| 7 | `.github/workflows/ios.yml` → `Verify deployment targets` | `test "$SEAL_TARGET" = "17.0"` | `"16.0"` |
+| 8 | `.github/workflows/ios-fast.yml` → `Verify Seal minimum deployment target …` | `test "$TARGET" = "17.0"` | `"16.0"` |
+| 9 | `.github/workflows/ios-release.yml` → `Verify Seal minimum deployment target …` | `test "$TARGET" = "17.0"` | `"16.0"` |
 
 > ⚠️ **`Config/Base.xcconfig` 那一处最容易漏** —— `Debug.xcconfig` / `Release.xcconfig` 都
 > `#include "Base.xcconfig"`，只改 `project.yml` 等于两个配置一起漏。
-> 守卫 **R68** 钉住这 6 处（含「`project.yml` 里不许再出现 `17.0`」＋ 2 个变异锚点）。
+> 守卫 **R68** 钉住这 9 处（含「`project.yml` 里不许再出现 `17.0`」＋ 5 个变异锚点）。
+
+#### 🔴 第 7–9 处是**漏过一次**才补上的（2026-09-21，白烧一轮 CI）
+
+第一版只改了 1–6，推上去 `build-package` 在 `Verify deployment targets` 步骤红 ✗。
+根因**不是没查**，而是**查法有洞**：
+
+- `AGENTS.md` 里本来就写着「CI 校验 `IPHONEOS_DEPLOYMENT_TARGET=17.0`；**改部署目标时同步查
+  三份 workflow 的断言**」—— 我上轮核对 `AGENTS.md` 时的结论是「无最低版本相关表述」✗，
+  **把最该看的那一行漏了**。
+- 更关键的是**守卫当初只钉 Xcode 声明、没钉 CI 断言** ⇒ 本地守卫**全绿**，
+  却拦不住 CI 红。⇒ **教训：「守卫绿」≠「判据完整」**；「CI 里有没有反向断言」必须自己
+  去 grep，不能假设守卫覆盖了。
+
+这三处断言的**强度其实比读 `project.yml` 更高**：它们跑 `xcodebuild -showBuildSettings`
+断言**生成产物**里的 `IPHONEOS_DEPLOYMENT_TARGET`，验证的是「XcodeGen 真的把它写进工程了」。
+⇒ 不能删，只能跟着改。现守卫 R68 已覆盖全部 9 处，并各配变异锚点。
 
 **代码侧**：`Seal/Features/Apps/SigningProgressView.swift` 的 `onChange(of:)` 从
 **双参数闭包**改为**单参数** —— `onChange(of:) { old, new in }` 是 iOS 17 才引入的重载，

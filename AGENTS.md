@@ -193,7 +193,11 @@ Windows 本机**无法编译**，一切以云 CI 编译 + 真机回归为准。
 - CI 失败原因必须能在不登录的情况下看到（`tee` 到 `build/TestLog.txt` + `::error::` 注解）。
 - CI 缓存「Refresh local SPM binary artifacts」只清 `SourcePackages/checkouts`，
   **不许 rm 整个 SourcePackages**（会删掉 OpenSSL.xcframework → `openssl/err.h not found`）。
-- CI 校验 `IPHONEOS_DEPLOYMENT_TARGET=17.0`；改部署目标时同步查三份 workflow 的断言。
+- CI 校验 `IPHONEOS_DEPLOYMENT_TARGET=16.0`（**三份** workflow：`ios.yml` / `ios-fast.yml` /
+  `ios-release.yml` 各有一处 `test "$…_TARGET" = "16.0"`）＋ 守卫 **R68** 同时钉住
+  `Config/Base.xcconfig`、`project.yml`(5 处) 与这三份 workflow ⇒ 改部署目标共 **9 处**，
+  ⚠️ **只改 Xcode 声明会漏掉 CI 断言 ⇒ `build-package` 在 `Verify deployment targets` 步骤红**
+  （2026-09-21 实际踩到：降 16.0 时漏了这三处，白烧一轮 CI）。
 - 改工作流触发条件前先跑 `Scripts/verify-release-safety.py`。
   ⚠️ **裸 `python` / `python3` 在本机不可用**（WindowsApps 存根：零输出、退出码 49
   —— 静默「没输出」不等于通过 ✗）；**但守卫本机可跑** ✓ —— 用托管解释器的**绝对路径**：
