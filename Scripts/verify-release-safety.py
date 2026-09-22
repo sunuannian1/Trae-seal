@@ -3983,6 +3983,54 @@ def violations(load=read):
           "R75: 二次确认必须有真单测 ✗ —— 「复核答装着」与「复核问不通」这两种退化"
           "只有单测能钉住（源码断言只能证明函数存在）")
 
+    # ── R76：删除失败**必须让用户看见**（2026-09-22 用户报「续签和待签名删不掉」）────────
+    #
+    # 用户原话：「续签和待签名删不掉」。日志（构建 199）里**一条删除相关的记录都没有**
+    # —— 因为这条路径的失败**完全静默**：
+    #   ① `delete(_:)` 开头有两处 `guard ... else { return false }`，都不写日志、不设 `alertFailure`；
+    #   ② 调用点 `Task { _ = await viewModel.delete(app) }` 把**返回值丢掉了**。
+    # ⇒ 用户点「删除」之后既没删掉、也没有任何提示。
+    # 更糟的是第二处：`OperationCoordinator` 是**单槽全局租约**，而 `beginWaiting` 会**先等满 30 秒**
+    # 再返回 nil ⇒ 界面毫无反应地卡半分钟，然后依然什么都没发生 ✗✗。
+    # 而真机上「租约被占着」是常态（续签 / 安装 / Seal 自续签事务都会占）。
+    #
+    # ⇒ 不变量：**`delete` 的每一条失败出口都必须设置 `alertFailure`（并留痕）**。
+    delete_body = section_or_empty(
+        apps_vm, "func delete(_ app: AppRecord) async -> Bool {", "func refreshAll() {"
+    )
+    # 把「静默出口」本身钉成反例 —— 这是最精确的一条：退回一行式写法就报红。
+    check("guard let appStore, let fileStore else { return false }" not in delete_body
+          and "acquireOperation(.maintainingStorage, appID: app.id) else { return false }"
+          not in delete_body,
+          "R76: 删除的失败出口不许静默 `return false` ✗ —— 调用点丢掉了返回值，"
+          "静默失败 = 用户点完「删除」什么都不会发生（用户就是这么报障的）")
+    missing_store = section_or_empty(
+        delete_body, "guard let appStore, let fileStore else {", "guard let operationLease"
+    )
+    check("alertFailure =" in missing_store and "SEAL-APP-005" in missing_store,
+          "R76: 存储组件未就绪时必须给用户一个弹窗 ＋ 日志 ✗")
+    lease_blocked = section_or_empty(
+        delete_body, "guard let operationLease", "defer { releaseOperation(operationLease) }"
+    )
+    check("alertFailure =" in lease_blocked and "SEAL-APP-004" in lease_blocked,
+          "R76: 租约被占用时必须给用户一个弹窗 ＋ 日志 ✗")
+    check("let activeTitle = operationCoordinator?.activeLease?.kind.title" in delete_body,
+          "R76: 必须**读出是谁占着租约**再告诉用户 ✗ —— 只说「有别的操作在进行」，"
+          "用户不知道该等什么，只能反复点")
+    check("Self.deleteBlockedFailure(activeOperationTitle: activeTitle)" in delete_body
+          and "static func deleteBlockedFailure(" in apps_vm,
+          "R76: 失败文案必须走纯函数（可单测）✗ —— 它的错法不崩、不编译失败，"
+          "只在真机上表现为「点了没反应」")
+    # 成功也要留痕：用户报「我的 App 不见了」时要能区分「他自己删的」与「对账删的」。
+    log_at = delete_body.find("SEAL-APP-006")
+    success_at = delete_body.find("return true")
+    check("SEAL-APP-006" in delete_body and log_at != -1 and success_at != -1 and log_at < success_at,
+          "R76: 用户主动删除成功也必须留痕（`SEAL-APP-006`），且必须写在 `return true` 之前 ✗")
+    delete_tests = load("SealTests/Apps/AppsViewModelDeleteFailureTests.swift")
+    check("func deleteBlockedFailureNamesTheOperationThatIsRunning()" in delete_tests
+          and "func deleteBlockedFailureStillExplainsWhenTheHolderIsUnknown()" in delete_tests,
+          "R76: 「删除被挡住」的提示必须有真单测 ✗ —— 这条链路的可见性全靠它")
+
     probe_failure_tests = load("SealTests/Maintenance/InstalledAppProbeFailurePolicyTests.swift")
     check("func onlySessionDeadDeservesUserAttention()" in probe_failure_tests
           and "func boundaryIsComplementaryToRetryDecision()" in probe_failure_tests,
@@ -5828,6 +5876,32 @@ def main():
          '                            + "（首次答「\\(entry.probe.logName)」，复核答「\\(confirmation.logName)」），"',
          '                            + "（两次不一致），"',
          "R75:"),
+        # ── R76：删除失败必须让用户看见（2026-09-22 用户报「续签和待签名删不掉」）──
+        # 退回「静默 `return false`」的一行式写法 ⇒ 用户点完「删除」什么都不会发生 ✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "        guard let appStore, let fileStore else {",
+         "        guard let appStore, let fileStore else { return false }; if false {",
+         "R76:"),
+        # 租约被占用时不再设弹窗（只写日志）⇒ 用户依然只看到「点了没反应」✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "            alertFailure = Self.deleteBlockedFailure(activeOperationTitle: activeTitle)",
+         "            _ = activeTitle",
+         "R76:"),
+        # 不读「是谁占着租约」⇒ 提示里说不出该等什么 ✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "            let activeTitle = operationCoordinator?.activeLease?.kind.title",
+         "            let activeTitle: String? = nil",
+         "R76:"),
+        # 成功删除不再留痕 ⇒ 用户报「我的 App 不见了」时分不清是谁删的 ✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         '                code: "SEAL-APP-006"',
+         '                code: "SEAL-APP-999"',
+         "R76:"),
+        # 把「删除被挡住」的单测改名 ⇒ 证明「必须有真单测」的断言真的会红 ✓。
+        ("SealTests/Apps/AppsViewModelDeleteFailureTests.swift",
+         "    func deleteBlockedFailureNamesTheOperationThatIsRunning() {",
+         "    func deleteBlockedFailureNamesTheOperationThatIsRunningRenamed() {",
+         "R76:"),
     ]
     # 变异检查每一遍都会把所有源文件**重新读一遍**：200+ 文件 × 90 多遍 ≈ 2 万次磁盘读。
     # 本仓在 OneDrive 同步目录里，单次读延迟不稳定 —— 实测同一份代码整轮耗时在

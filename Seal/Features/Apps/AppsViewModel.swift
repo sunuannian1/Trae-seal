@@ -1496,9 +1496,60 @@ final class AppsViewModel: ObservableObject {
     }
 
 
+    /// 删除被别的操作挡住时的失败描述（2026-09-22 用户报「续签和待签名删不掉」）。
+    ///
+    /// 为什么必须单独做出来：`delete` 的调用点是
+    /// `Task { _ = await viewModel.delete(app) }` —— **返回值被丢掉了** ✗
+    /// ⇒ 只要有一条 `return false` 不设置 `alertFailure`，用户点完「删除」就会
+    /// **既没删掉、也没有任何提示**（这正是那个报障的形态）。
+    /// 抽成纯函数是为了能单测：它的错法不崩、不编译失败，只在真机上表现为「点了没反应」。
+    static func deleteBlockedFailure(activeOperationTitle: String?) -> ImportFailure {
+        let active = activeOperationTitle ?? "另一个操作"
+        return ImportFailure(
+            title: "删除没有执行",
+            reason: "「\(active)」正在进行，为避免文件与记录状态互相覆盖，本次删除被推迟；"
+                + "你的应用和文件都还在。",
+            recovery: "等它结束后再点一次「删除」",
+            code: "SEAL-APP-004"
+        )
+    }
+
     func delete(_ app: AppRecord) async -> Bool {
-        guard let appStore, let fileStore else { return false }
-        guard let operationLease = await acquireOperation(.maintainingStorage, appID: app.id) else { return false }
+        guard let appStore, let fileStore else {
+            // ⚠️ 不能静默返回：调用点丢掉了返回值 ⇒ 用户什么都看不到。
+            try? await logStore?.append(
+                category: .installation,
+                level: .error,
+                message: "无法移除应用：本地存储组件未就绪（appStore / fileStore 为空）",
+                code: "SEAL-APP-005"
+            )
+            alertFailure = ImportFailure(
+                title: "无法移除应用",
+                reason: "Seal 的本地存储还没准备好，本次删除没有执行；你的应用和文件都还在。",
+                recovery: "稍后重试；如持续失败请重新打开 Seal",
+                code: "SEAL-APP-005"
+            )
+            return false
+        }
+        guard let operationLease = await acquireOperation(.maintainingStorage, appID: app.id) else {
+            // 🔴 静默失败的第二处（2026-09-22 用户报「删不掉」的直接嫌疑）。
+            //
+            // `OperationCoordinator` 是**单槽全局租约**，而 `beginWaiting` 会先**等满 30 秒**
+            // 再返回 nil ⇒ 原来这里直接 `return false` 的后果是：
+            // 用户点完「删除」界面毫无反应地卡半分钟，然后**依然什么都没发生** ✗✗。
+            // 而真机上「租约被占着」是常态（续签 / 安装 / Seal 自续签事务都可能占着它）。
+            // ⇒ 现在把**是谁占着**写进日志与弹窗，让用户知道该等什么。
+            let activeTitle = operationCoordinator?.activeLease?.kind.title
+            try? await logStore?.append(
+                category: .installation,
+                level: .warning,
+                message: "无法移除应用：操作租约被占用"
+                    + "（\(activeTitle ?? "未知操作")），本次删除没有执行",
+                code: "SEAL-APP-004"
+            )
+            alertFailure = Self.deleteBlockedFailure(activeOperationTitle: activeTitle)
+            return false
+        }
         defer { releaseOperation(operationLease) }
         do {
             try await appStore.delete(id: app.id)
@@ -1534,6 +1585,16 @@ final class AppsViewModel: ObservableObject {
                 }
             }
             await load(force: true)
+            // 「做了什么要说」：这是**用户主动**的破坏性操作，必须留痕 ——
+            // 用户报「我的 App 不见了」时要能区分是**他自己删的**还是对账删的
+            //（对账那条写 `SEAL-RECONCILE-007`，两条日志同属「安装」栏目，便于对照）。
+            try? await logStore?.append(
+                category: .installation,
+                level: .info,
+                message: "已移除应用记录：\(app.displayName)"
+                    + "（\(installedBundleIdentifier(for: app) ?? app.originalBundleIdentifier)）",
+                code: "SEAL-APP-006"
+            )
             if let historyFailure {
                 alertFailure = historyFailure
             }
