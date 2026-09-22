@@ -3785,17 +3785,9 @@ def violations(load=read):
           "R72: `-003` 必须带上**尝试次数 + 耗时** ✗ —— 分不清「快速失败（通道还没起来）」"
           "与「撞满超时（会话已死）」，这条日志仍然无法归因")
 
-    abort_alert = squash(section_or_empty(
-        apps_vm, "static func reconcileAbortFailure(", "\n    }"
-    ))
-    check('recovery: "知道了"' in abort_alert,
-          "R72: 对账中止的弹窗**不许跳转** ✗ —— `settingsRoute` 对 `SEAL-INSTALL-` 前缀"
-          "一律路由到 LocalDevVPN 设置页，而「读不到设备状态」最常见的原因是"
-          "**通道还没起来**（真机实测 3 秒后即恢复）⇒ 那是假警报")
-    check("本轮未改动任何记录" in abort_alert,
-          "R72: 中止弹窗必须说清「本轮未改动任何记录」✗ —— 否则用户会以为数据出了问题")
-    check(reconcile_body.count("Self.reconcileAbortFailure(") == 2,
-          "R72: 两个中止分支（阳性对照失败 / 逐条查询失败）必须共用同一个弹窗构造 ✗")
+    # ⚠️ 原来这里还有 3 条断言（弹窗 `recovery: "知道了"` / 文案含「本轮未改动任何记录」/
+    # 两个中止分支共用同一个弹窗构造）。2026-09-22 构建 201 的真机日志把「弹窗」这个方案
+    # **整体否掉了**（见 R74）⇒ 这三条连同被它们钉住的 `reconcileAbortFailure` 一起删除 ✓。
 
     notif_policy = strip_comments(
         load("Seal/Core/Notifications/ExpiryNotificationSchedulingPolicy.swift")
@@ -3875,18 +3867,121 @@ def violations(load=read):
           "R73: 只有「会话已死」才允许打断用户 ✗ —— 「通道还没起来」也弹窗的话，"
           "用户每下拉一次刷新就被推进 LocalDevVPN 设置页（真机实测它 3 秒后自己就好了）")
 
-    # 中止弹窗必须**走这条判据**，不能在调用点写死 —— 写死等于「只有会话已死才打断用户」
-    # 失去约束，假警报会原样回来（而日志、单测、守卫都可能照样绿）。
+    # 「这次失败该不该当回事」必须**走这条判据**，不能在调用点写死 ——
+    # 写死等于「快/慢失败的区分」失去约束，日志级别会与判据漂移（而单测与守卫都可能照样绿）。
     reconcile_squashed = squash(reconcile_body)
+    kind_at = reconcile_squashed.find(
+        "InstalledAppProbeFailurePolicy.kind(elapsed: control.elapsed)"
+    )
+    level_at = reconcile_squashed.find("level: deservesAttention ? .warning : .info")
+    check(kind_at != -1 and level_at != -1 and kind_at < level_at,
+          "R73: 必须先给失败定性、再决定日志级别 ✗ —— 顺序反了（或判据没接上）等于没生效")
     check("InstalledAppProbeFailurePolicy.deservesUserAttention(" in reconcile_squashed,
-          "R73: 中止弹窗必须走纯判据 ✗ —— 在调用点写字面量会让「假警报」回来")
-    kind_at = reconcile_squashed.find("InstalledAppProbeFailurePolicy.kind(elapsed: control.elapsed)")
-    alert_at = reconcile_squashed.find("if userInitiated, deservesAttention {")
-    check(kind_at != -1 and alert_at != -1 and kind_at < alert_at,
-          "R73: 必须先给失败定性、再决定弹不弹 ✗ —— 顺序反了（或判据没接上）等于没生效")
+          "R73: 日志级别必须走纯判据 ✗ —— 在调用点写字面量会让「快/慢」的区分漂移")
     check("level: deservesAttention ? .warning : .info" in reconcile_squashed,
           "R73: 日志级别必须跟着同一条判据走 ✗ —— 快速失败属第③类「条件不满足 ⇒ 跳过」，"
           "记成 warning 会把真问题淹在噪声里（真机日志里 90 分钟 10 条全是这种假 warning）")
+
+    # ── R74：对账路径**不再弹任何模态窗** ＋ 删除必须留痕到「删了谁」（2026-09-22 构建 201 日志）──
+    #
+    # 构建 201 的真机日志（`Seal-log(31).txt`，7 分钟）给出三条硬证据：
+    #
+    # ① **判据闸门本身是对的**：`-003` 出现 6 次 —— 4 次「尝试 3 次，末次耗时 0.0 秒」是
+    #    **info 级**，2 次「尝试 1 次，末次耗时 15.0/15.1 秒」是 **warning 级**
+    #    ⇒ 分级与设计完全一致 ✓（R73 的判据真的生效了）。
+    # ② 但**「撞满超时 = 会话已死」被证伪**：12:46:59 超时(15.0s) → 12:47:37 通道检测又「正常」；
+    #    12:47:51 超时(15.1s) → 12:47:55 对账正常跑完。⇒ 15 秒超时是**会话暂时卡住**，不是死 ✗
+    #    ⇒ 拿它当弹窗判据**仍然会产生假警报**（7 分钟里 2 次）。
+    # ③ 🔴 日志里有 `-005 探测 2 条，删除 1 条`，而探测的那 2 条正是用户 **9 分钟前与 1.5 分钟前
+    #    刚刚装成功**的 Lanerc 与 LiveContainer ⇒ **删的是谁，日志里查不出来** ✗✗
+    #    —— 这条路径是**破坏性**的，只报计数等于没有审计线索。
+    #
+    # ⇒ 结论：**对账失败永远不值得打断用户**（它一次都没改动过数据，而日志证明这类失败总会自己
+    #    恢复），弹窗整体删掉；删除动作必须把「删了谁、设备怎么答的、谁触发的」写进日志。
+    check("alertFailure" not in reconcile_body,
+          "R74: 对账路径**不许**弹任何模态窗 ✗ —— 中止时本轮一条记录都没删、列表也已从本地库"
+          "刷新过 ⇒ 用户没有任何需要立刻处理的后果；而真机日志证明这类失败**总会自己恢复**"
+          "（15 秒超时之后 40 秒内通道就正常了）⇒ 弹窗只会变成假警报")
+    check("SEAL-RECONCILE-007" in reconcile_body,
+          "R74: 删除必须单独留痕 ✗ —— 只有 `-005 删除 N 条` 的话，用户报「我的 App 不见了」时"
+          "**查不出删的是谁**（构建 201 的真机日志正是这个形态：探测 2 条删 1 条，"
+          "而那两条都是刚刚装成功的 App）")
+    # ⚠️ 区段起点必须是 `let label = `，**不是**日志文案那一行 —— `label` 定义在日志调用
+    # **之前**，起点取晚了区段里就只有 `\(label)` 而看不到 `entry.app.name` /
+    # `deletedBundleID` ⇒ 这条断言会**假红**（2026-09-22 实际踩到）。
+    # 顺带这也是「锚点必须与它要守的东西同处一段」的实例：变异锚点改的正是 `let label = `
+    # 那一行，区段不覆盖它就等于没在守。
+    deletion_log = squash(section_or_empty(
+        reconcile_body, "let label = ", 'code: "SEAL-RECONCILE-007"'
+    ))
+    check("entry.app.name" in deletion_log and "deletedBundleID" in deletion_log,
+          "R74: 删除日志必须带**应用名 ＋ Bundle ID** ✗ —— 只说「删了 1 条」无法定位到具体哪个 App")
+    check("entry.probe.logName" in deletion_log,
+          "R74: 删除日志必须带**设备对它的回答** ✗ —— 否则分不清「设备答未安装」与"
+          "「查询失败被折成未安装」")
+    check('removedSummary.joined(separator: "、")' in reconcile_squashed,
+          "R74: `-005` 必须把删掉的 App 名字一起写出来 ✗ —— 用户（和排查的人）只看这条汇总行")
+    check(reconcile_squashed.count("Self.triggerText(userInitiated)") == 5,
+          "R74: 中止（阳性对照 / 逐条 / 二次确认）与完成（汇总 / 逐条删除）都要写**触发来源** ✗ —— "
+          "构建 201 的日志里有 2 条超时中止，而我**无法判断**当时是不是用户在下拉刷新，"
+          "也就无法判断「用户会不会看到弹窗」✗（新增一处调用点时请同步这里）")
+    trigger_body = squash(section_or_empty(
+        apps_vm, "private static func triggerText(", "\n    }"
+    ))
+    check('return userInitiated ? "触发：下拉刷新" : "触发：启动或回到前台"' in trigger_body,
+          "R74: 触发来源必须区分「下拉刷新」与「启动/回到前台」✗ —— 前者是用户主动做的、"
+          "后者是自动的，这是排查这条链路时第一个要问的问题")
+
+    # ── R75：删除前**二次确认**（2026-09-22 构建 201 日志的第二次修正）──────────────
+    #
+    # 为什么「阳性对照通过」还不够：阳性对照只证明**这条通道此刻是通的**，证明不了
+    # 「同一个通道对**这个** Bundle ID 的否定答案是对的」—— 底层
+    # `_rust_bridge_instproxy_lookup` 把 lookup 的 `Err` 与「没查到」折成**同一个空指针**
+    # ⇒ **一次查询失败会伪装成「没装」** ✗。这正是本仓反复踩到的那个折叠陷阱，
+    # 而「阳性对照」只覆盖了它的**全局**形态（通道整体不通），覆盖不了**单条**形态。
+    #
+    # 构建 201 的日志把这条路径的后果摆出来了：那次 `探测 2 条，删除 1 条` 恰好落在
+    # 通道剧烈抖动的窗口内（12:46:59 / 12:47:51 两次 15 秒超时、12:47:53–54 通道检测
+    # 报「安装服务=设备连接失败」），而那 2 条正是用户 5 分钟前与 1.5 分钟前
+    # **刚装成功**的 Lanerc 与 LiveContainer ⇒ 删的是谁、删对没有，日志都答不出来。
+    # ⇒ 删除是**不可逆**动作，必须拿到**两次一致的否定答案**才允许执行。
+    check("SEAL-RECONCILE-008" in reconcile_body,
+          "R75: 二次确认失败必须留痕 ✗ —— 否则「这一轮明明该删却没删」事后查不出来")
+    confirm_at = reconcile_body.find(
+        "let confirmation = await InstalledAppDeviceVerifier.probe(bundleIdentifier: deletedBundleID)"
+    )
+    check(confirm_at != -1,
+          "R75: 删除前必须**再问一次**设备 ✗ —— 一次否定答案就删，"
+          "等于把「查询失败被折成没装」直接变成删除")
+    check(confirm_at != -1 and confirm_at < remove_at,
+          "R75: 二次确认必须在 `await delete(` **之前** ✗ —— 放到删除之后等于没有确认")
+    # ⚠️ 区段终点取 `let label = `（= 复核块之后的第一行）—— 取 `-008` 那行的话
+    # `return` 不在区段里，「必须中止整轮」这条断言会**假红**（与 R74 同一类坑）。
+    confirm_body = section_or_empty(
+        reconcile_body,
+        "let confirmation = await InstalledAppDeviceVerifier.probe(",
+        "let label = "
+    )
+    check("InstalledAppReconcilePolicy.confirmedRemoval(" in confirm_body
+          and "first: entry.probe" in confirm_body
+          and "confirmation: confirmation" in confirm_body,
+          "R75: 两次答案必须**都**是否定才允许删，且判据要走纯函数 ✗ —— "
+          "在调用点直接写 `confirmation == .notInstalled` 会让规则散成两份，"
+          "而它的错法只在真机上表现为**删错数据**（源码断言与单测都钉不住第二份）")
+    check("return" in confirm_body,
+          "R75: 两次答案不一致必须**中止整轮** ✗ —— 只 `continue` 跳过这一条的话，"
+          "后面的记录会继续被同一条不可信的通道判定并删除，而代码看起来仍然有中止逻辑")
+    check("entry.probe.logName" in confirm_body and "confirmation.logName" in confirm_body,
+          "R75: 日志必须同时写出**两次的答案** ✗ —— 否则分不清是「通道抖动」还是「用户真卸了」")
+    check("static func confirmedRemoval(" in reconcile_policy
+          and "first: ProfileReclaimPolicy.InstallProbe" in reconcile_policy
+          and "confirmation: ProfileReclaimPolicy.InstallProbe" in reconcile_policy
+          and "return first == .notInstalled && confirmation == .notInstalled" in reconcile_policy,
+          "R75: 二次确认必须是纯函数，且**两次都是**否定答案才为真 ✗ —— "
+          "少掉后半个条件，复核答「装着」也会放行，等于没有复核")
+    check("func confirmationMustAgreeBeforeRemoving()" in reconcile_tests,
+          "R75: 二次确认必须有真单测 ✗ —— 「复核答装着」与「复核问不通」这两种退化"
+          "只有单测能钉住（源码断言只能证明函数存在）")
 
     probe_failure_tests = load("SealTests/Maintenance/InstalledAppProbeFailurePolicyTests.swift")
     check("func onlySessionDeadDeservesUserAttention()" in probe_failure_tests
@@ -5594,17 +5689,12 @@ def main():
          r'                    + "尝试 \(control.attempts) 次，末次耗时 \(Self.secondsText(control.elapsed))），"',
          r'                    + "（略）"',
          "R72:"),
-        # 把中止弹窗的按钮改回「会跳转」的文案 ⇒ `settingsRoute` 会把用户推进 LocalDevVPN
-        # 设置页，而最常见的成因只是通道还没起来（真机实测 3 秒后恢复）✓ 报红。
-        ("Seal/Features/Apps/AppsViewModel.swift",
-         '            recovery: "知道了",\n            code: "SEAL-INSTALL-707"',
-         '            recovery: "检查是否打开 LocalDevVPN",\n            code: "SEAL-INSTALL-707"',
-         "R72:"),
-        # 把中止弹窗里「本轮未改动任何记录」删掉 ⇒ 用户会以为数据出了问题 ✓ 报红。
-        ("Seal/Features/Apps/AppsViewModel.swift",
-         '                + "本轮未改动任何记录，已安装列表保持原样。\\n"',
-         '                + "已安装列表保持原样。\\n"',
-         "R72:"),
+        # ⚠️ 这里原有 2 个 R72 锚点（中止弹窗的按钮文案 / 弹窗里的「本轮未改动任何记录」），
+        # 2026-09-22 的 R74 把中止分支的**弹窗整体删掉**之后，它们已经没有对象可锚 ⇒ 移除。
+        # 对应的 2 条 R72 断言也已一并删掉（见 R73/R74 段前面的说明）。
+        # ⇒ 教训：**删掉一段实现时，要同时清掉钉它的断言「和」变异锚点** ——
+        #    只清断言会让守卫报 `Mutation anchor missing`（本轮实际踩到），
+        #    而报错信息指向的是锚点、不是被删的实现，很容易被误读成「锚点写错了」✗。
         # 把「没给权限就跳过」改成「照样去排」⇒ 每次刷新都会拿到一条必然失败的 error 日志，
         # 也就是那 100 条 `SEAL-NOTIFY-002a` 的成因 ✓ 报红。
         ("Seal/Core/Notifications/ExpiryNotificationSchedulingPolicy.swift",
@@ -5649,11 +5739,11 @@ def main():
          "        case transient",
          "        case pending",
          "R73:"),
-        # 把弹窗的判据闸门摘掉（退回「只要用户下拉就弹」）✓ 报红 ——
-        # 这正是用户报的那个形态，且**代码看起来仍然「有弹窗逻辑」**，最难发现。
+        # 把「先定性、再决定级别」里的定性写死成字面量 ⇒ 判据与日志级别脱钩，
+        # 而代码看起来仍然「在用判据」✓ 报红。
         ("Seal/Features/Apps/AppsViewModel.swift",
-         "            if userInitiated, deservesAttention {",
-         "            if userInitiated {",
+         "            let failureKind = InstalledAppProbeFailurePolicy.kind(elapsed: control.elapsed)",
+         "            let failureKind = InstalledAppProbeFailurePolicy.Kind.transient",
          "R73:"),
         # 把日志级别固定成 warning ⇒ 「条件不满足 ⇒ 跳过」又变成 warning，
         # 真问题会被淹在噪声里（真机 90 分钟 10 条假 warning）✓ 报红。
@@ -5666,6 +5756,78 @@ def main():
          "    func onlySessionDeadDeservesUserAttention() {",
          "    func onlySessionDeadDeservesUserAttentionRenamed() {",
          "R73:"),
+        # ── R74：对账不再弹窗 ＋ 删除留痕（2026-09-22 构建 201 真机日志）──
+        # 把弹窗加回中止分支 ⇒ 「对账路径不弹任何模态窗」这条不变量被破坏 ✓ 报红。
+        # （这正是构建 200 之前的形态，也是用户报「刷新弹窗让去检测 VPN」的来源。）
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         '                code: "SEAL-RECONCILE-003"\n            )\n            return',
+         '                code: "SEAL-RECONCILE-003"\n            )\n'
+         '            alertFailure = ImportFailure(title: "t", reason: "r",'
+         ' recovery: "知道了", code: "SEAL-INSTALL-707")\n            return',
+         "R74:"),
+        # 把删除留痕的码去掉 ⇒ `-005` 又变成「只有计数」，删了谁查不出来 ✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         '                        code: "SEAL-RECONCILE-007"',
+         '                        code: "SEAL-RECONCILE-999"',
+         "R74:"),
+        # 把删除日志里的「应用名 ＋ Bundle ID」删掉 ⇒ 无法定位到具体哪个 App ✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         '                let label = "\\(entry.app.name)（\\(deletedBundleID)）"',
+         '                let label = "（略）"',
+         "R74:"),
+        # 把「设备对它的回答」删掉 ⇒ 分不清「设备答未安装」与「查询失败被折成未安装」✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         '                            + " —— 设备答「\\(entry.probe.logName)」且阳性对照已通过、否定答案复核一致；"',
+         '                            + " —— 阳性对照已通过；"',
+         "R74:"),
+        # 把 `-005` 里的删除清单删掉 ⇒ 汇总行又只剩计数 ✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         '                + (removedSummary.isEmpty ? "" : "（删除：\\(removedSummary.joined(separator: "、"))）")',
+         '                + ""',
+         "R74:"),
+        # 把触发来源写死成「下拉刷新」⇒ 排查时分不出「用户主动」与「自动」✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         '        return userInitiated ? "触发：下拉刷新" : "触发：启动或回到前台"',
+         '        return "触发：下拉刷新"',
+         "R74:"),
+        # ── R75：删除前二次确认（2026-09-22 构建 201 日志的第二次修正）──
+        # 把「两次都必须是否定」放宽成「永远允许删」⇒ 又回到「一次否定答案就删」✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "                guard InstalledAppReconcilePolicy.confirmedRemoval(\n"
+         "                    first: entry.probe,\n"
+         "                    confirmation: confirmation\n"
+         "                ) else {",
+         "                guard true else {",
+         "R75:"),
+        # 把判据从纯函数退回调用点手写（少掉「复核也必须是否定」这一半）✓ 报红。
+        ("Seal/Core/Maintenance/InstalledAppReconcilePolicy.swift",
+         "        return first == .notInstalled && confirmation == .notInstalled",
+         "        return first == .notInstalled",
+         "R75:"),
+        # 把二次确认的单测改名 ⇒ 证明「必须有真单测」的断言真的会红 ✓。
+        ("SealTests/Maintenance/InstalledAppReconcilePolicyTests.swift",
+         "    func confirmationMustAgreeBeforeRemoving() {",
+         "    func confirmationMustAgreeBeforeRemovingRenamed() {",
+         "R75:"),
+        # 把「中止整轮」降级成「只跳过这一条」⇒ 后面的记录继续被同一条不可信的通道删 ✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         '                        code: "SEAL-RECONCILE-008"\n'
+         '                    )\n'
+         '                    return',
+         '                        code: "SEAL-RECONCILE-008"\n'
+         '                    )\n'
+         '                    continue',
+         "R75:"),
+        # 不再问设备、直接复用第一次的答案 ⇒ 「二次确认」名存实亡 ✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "                let confirmation = await InstalledAppDeviceVerifier.probe(bundleIdentifier: deletedBundleID)",
+         "                let confirmation = entry.probe",
+         "R75:"),
+        # 日志里只写「两次不一致」而不写两次分别答了什么 ⇒ 分不清通道抖动与用户真卸 ✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         '                            + "（首次答「\\(entry.probe.logName)」，复核答「\\(confirmation.logName)」），"',
+         '                            + "（两次不一致），"',
+         "R75:"),
     ]
     # 变异检查每一遍都会把所有源文件**重新读一遍**：200+ 文件 × 90 多遍 ≈ 2 万次磁盘读。
     # 本仓在 OneDrive 同步目录里，单次读延迟不稳定 —— 实测同一份代码整轮耗时在

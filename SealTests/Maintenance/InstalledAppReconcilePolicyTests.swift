@@ -111,4 +111,37 @@ struct InstalledAppReconcilePolicyTests {
         #expect(Set(names).count == 3)
         #expect(names.allSatisfy { $0.isEmpty == false })
     }
+
+    /// 删除前的**二次确认**：两次答案必须都是「未安装」才允许删（2026-09-22 构建 201 日志）。
+    ///
+    /// 阳性对照只能证明「通道整体是通的」，证明不了「它对**这一个** Bundle ID 的否定
+    /// 答案是对的」—— 底层把 lookup 的 `Err` 与「没查到」折成同一个空指针，
+    /// 所以**单条**查询失败也会伪装成「没装」。而删除是不可逆的。
+    @Test
+    func confirmationMustAgreeBeforeRemoving() {
+        // 只有两次都答「未安装」才放行。
+        #expect(
+            InstalledAppReconcilePolicy.confirmedRemoval(
+                first: .notInstalled, confirmation: .notInstalled
+            )
+        )
+        // 复核答「装着」⇒ 第一次的否定答案不可信 ⇒ 不许删。
+        #expect(
+            InstalledAppReconcilePolicy.confirmedRemoval(
+                first: .notInstalled, confirmation: .installed
+            ) == false
+        )
+        // 复核**问不通**（超时 / 抛错）⇒ 同样不许删（`nil` 不能被读成「没装」）。
+        #expect(
+            InstalledAppReconcilePolicy.confirmedRemoval(
+                first: .notInstalled, confirmation: .unavailable
+            ) == false
+        )
+        // 第一次就不是否定答案 ⇒ 本来就不该走到删除，这里也必须为假。
+        #expect(
+            InstalledAppReconcilePolicy.confirmedRemoval(
+                first: .installed, confirmation: .notInstalled
+            ) == false
+        )
+    }
 }

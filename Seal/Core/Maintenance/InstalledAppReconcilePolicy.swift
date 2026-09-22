@@ -82,4 +82,32 @@ enum InstalledAppReconcilePolicy {
             return positiveControlPassed ? .removeRecord : .abortPass
         }
     }
+
+    /// 删除前的**二次确认**判据 —— 两次答案必须**都是**「未安装」才允许执行删除。
+    ///
+    /// ## 为什么「阳性对照通过」还不够（2026-09-22 构建 201 真机日志）
+    ///
+    /// 阳性对照只证明**这条通道此刻是通的**，证明不了「同一个通道对**这个** Bundle ID
+    /// 的否定答案是对的」—— 底层 `_rust_bridge_instproxy_lookup` 把 lookup 的 `Err`
+    /// 与「没查到」折成**同一个空指针** ⇒ **单条**查询失败同样会伪装成「没装」。
+    /// 也就是说阳性对照覆盖的是那个折叠陷阱的**全局**形态（通道整体不通），
+    /// 覆盖不了**单条**形态。
+    ///
+    /// 真机日志里那次「探测 2 条，删除 1 条」恰好落在通道剧烈抖动的窗口内
+    /// （12:46:59 / 12:47:51 两次 15 秒超时、12:47:53–54 通道检测报
+    /// 「安装服务=设备连接失败」），而那 2 条正是用户 5 分钟前与 1.5 分钟前
+    /// **刚装成功**的 App ⇒ 删的是谁、删对没有，日志都答不出来 ✗。
+    ///
+    /// ⇒ 删除是**不可逆**动作（记录 ＋ `Documents/Apps/<UUID>` 里的 IPA 一起删），
+    /// 所以要求两次**独立**查询给出一致的否定答案。
+    /// 代价有界：只有「已经答未安装」的那几条才会多问一次（真机上通常 0–1 条）。
+    ///
+    /// 抽成纯函数的原因与 `decision` 相同 —— 它的错法**不崩、不编译失败**，
+    /// 只在真机上表现为**删错数据**。
+    static func confirmedRemoval(
+        first: ProfileReclaimPolicy.InstallProbe,
+        confirmation: ProfileReclaimPolicy.InstallProbe
+    ) -> Bool {
+        return first == .notInstalled && confirmation == .notInstalled
+    }
 }

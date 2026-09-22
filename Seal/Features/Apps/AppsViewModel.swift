@@ -655,29 +655,33 @@ final class AppsViewModel: ObservableObject {
             )
         }
         guard positiveControlPassed else {
-            // ⚠️ **先给这次失败定性，再决定要不要打扰用户**（判据是纯函数，单测与守卫都钉在它上）。
-            // 只有「撞满超时 = 会话已死」才值得弹窗（那时「去查 LocalDevVPN」真的有用）；
-            // 「快速失败 = 通道还没起来」必须**静默** —— 真机实测它 3 秒后自己就好了，
-            // 而弹窗的按钮会被 `settingsRoute` 路由到 LocalDevVPN 设置页
-            // ⇒ 每下拉一次刷新就假警报一次（用户原话：「有时候刷新还是出现弹窗让去检测VPN」）。
-            // 重试窗口（~2.2 秒）短于通道恢复（~3 秒），所以光靠重试消不掉这一类 —— 判据才是关键。
+            // ⚠️ **这条路径不弹任何模态窗**（2026-09-22 第二次修正）。
+            //
+            // 判据只有一句：**一次「什么都没做」的失败，不配打断用户**。中止时本轮
+            // **一条记录都没删**，列表也已经从本地库刷新过了 ⇒ 用户没有任何需要立刻处理的后果，
+            // 而模态窗会打断他手上正在做的事。
+            //
+            // 构建 201 的真机日志把上一版判据（「只有撞满超时 = 会话已死才弹」）也**证伪**了：
+            // 那 2 次「撞满超时」并不是会话已死 ——
+            // 12:46:59 超时(15.0s) → 12:47:37 通道检测又「正常」；
+            // 12:47:51 超时(15.1s) → 12:47:55 对账就正常跑完了（还删了 1 条）
+            // ⇒ **15 秒超时是「会话暂时卡住」，不是死**；拿它当弹窗判据仍然会产生假警报 ✗。
+            //
+            // 而「VPN 没开」这个信息有它**自己的**入口：设置里的通道检测会写 `SEAL-INSTALL-706b`，
+            // 并给出「请确认…是否打开 LocalDevVPN」的完整说明（同一份日志里就有）。
+            // 这里只留**日志**；级别按失败形态分（快速失败 = 第③类「条件不满足 ⇒ 跳过」= info）。
             let failureKind = InstalledAppProbeFailurePolicy.kind(elapsed: control.elapsed)
             let deservesAttention = InstalledAppProbeFailurePolicy.deservesUserAttention(failureKind)
             try? await logStore?.append(
                 category: .installation,
-                // 级别跟着同一条判据走：快速失败属第③类「条件不满足 ⇒ 跳过」，不是 warning。
+                // 级别跟着同一条判据走：快速失败属第③类，不是 warning。
                 level: deservesAttention ? .warning : .info,
                 message: "已安装列表对账中止：阳性对照未通过"
                     + "（\(controlBundleID)：\(control.probe.logName)，"
                     + "尝试 \(control.attempts) 次，末次耗时 \(Self.secondsText(control.elapsed))），"
-                    + "本轮不删除任何记录",
+                    + "本轮不删除任何记录；\(Self.triggerText(userInitiated))",
                 code: "SEAL-RECONCILE-003"
             )
-            if userInitiated, deservesAttention {
-                alertFailure = Self.reconcileAbortFailure(
-                    detail: "\(control.probe.logName)，末次耗时 \(Self.secondsText(control.elapsed))"
-                )
-            }
             return
         }
 
@@ -692,19 +696,17 @@ final class AppsViewModel: ObservableObject {
             guard let bundleIdentifier = installedBundleIdentifier(for: app) else { continue }
             let probe = await InstalledAppDeviceVerifier.probe(bundleIdentifier: bundleIdentifier)
             if probe == .unavailable {
-                // ⚠️ 这里**刻意**与上面阳性对照分支不对称：走到这里说明阳性对照**刚刚通过**
-                //（通道几秒前还是好的），随后立刻失败 ⇒ 那是「通道在本次对账中途死掉」，
-                // 不是「还没起来」，所以**照旧弹窗**（此时去查 LocalDevVPN 确实有用）。
-                // 若通道一直没起来，阳性对照那一步就已经拦下了（且是静默的），到不了这里。
+                // ⚠️ 同样**不弹窗**（与上面阳性对照分支一致）：本轮什么都没删，
+                // 用户没有需要立刻处理的后果。走到这里说明「通道在对账中途坏掉」，
+                // 但真机日志（构建 201）证明这类坏掉同样会自己恢复
+                //（12:47:51 撞满超时 → 12:47:55 对账就正常跑完了）⇒ 不值得打断用户。
                 try? await logStore?.append(
                     category: .installation,
                     level: .warning,
-                    message: "已安装列表对账中止：\(bundleIdentifier) 查询失败，本轮不删除任何记录",
+                    message: "已安装列表对账中止：\(bundleIdentifier) 查询失败，本轮不删除任何记录"
+                        + "；\(Self.triggerText(userInitiated))",
                     code: "SEAL-RECONCILE-004"
                 )
-                if userInitiated {
-                    alertFailure = Self.reconcileAbortFailure(detail: "\(bundleIdentifier) 查询失败")
-                }
                 return
             }
             probes.append((app, probe))
@@ -714,6 +716,7 @@ final class AppsViewModel: ObservableObject {
         // `InstalledAppReconcilePolicy.decision` 要求「答未安装」必须**问过阳性对照**
         // 才允许删 —— 单测与守卫都钉在这一句上，别在调用点改成字面量 true。
         var removedCount = 0
+        var removedSummary: [String] = []
         for entry in probes {
             switch InstalledAppReconcilePolicy.decision(
                 probe: entry.probe,
@@ -722,7 +725,57 @@ final class AppsViewModel: ObservableObject {
             case .keepInstalled:
                 continue
             case .removeRecord:
-                if await delete(entry.app) { removedCount += 1 }
+                // 🔴 **删除必须留痕到「删了谁」**（2026-09-22 构建 201 的真机日志暴露）。
+                //
+                // 那份日志里有 `-005 探测 2 条，删除 1 条`，而探测的 2 条正是用户
+                // **9 分钟前与 1.5 分钟前刚刚装成功**的 Lanerc 与 LiveContainer
+                // ⇒ 到底是「用户自己卸了一个」还是「通道答错了」，**日志里查不出来** ✗。
+                // 而这条路径是**破坏性**的：事后既无法确认它删对了，也无法在删错时知道丢了什么。
+                // 判据：**拿着这条日志要能说出「删了谁、设备对它的回答是什么」**。
+                guard let deletedBundleID = installedBundleIdentifier(for: entry.app) else { continue }
+                // 🔴 **删之前再问一次**（2026-09-22，构建 201 日志的第二次修正）。
+                //
+                // 为什么「阳性对照通过」还不够：阳性对照只证明**这条通道此刻是通的**，
+                // 证明不了「同一个通道对**这个** Bundle ID 的否定答案是对的」——
+                // 底层 `_rust_bridge_instproxy_lookup` 把 lookup 的 `Err` 与「没查到」
+                // 折成**同一个空指针** ⇒ **一次查询失败会伪装成「没装」** ✗。
+                //
+                // 构建 201 的日志里，那次「探测 2 条，删除 1 条」恰好落在通道剧烈抖动的窗口内
+                //（12:46:59 / 12:47:51 两次 15 秒超时、12:47:53–54 通道检测报「安装服务=设备连接失败」），
+                // 而那 2 条正是用户 5 分钟前与 1.5 分钟前**刚装成功**的 Lanerc 与 LiveContainer
+                // ⇒ 删的是谁、删对没有，都查不出来 ✗。删除是**不可逆**的 ⇒ 必须拿到**两次一致的否定答案**。
+                // 代价有界：只有「已经答未安装」的那几条才会多问一次（通常 0–1 条）。
+                let confirmation = await InstalledAppDeviceVerifier.probe(bundleIdentifier: deletedBundleID)
+                guard InstalledAppReconcilePolicy.confirmedRemoval(
+                    first: entry.probe,
+                    confirmation: confirmation
+                ) else {
+                    // 两次答案不一致（或第二次问不通）⇒ **这条通道此刻不可信** ⇒ 整轮中止，一条都不再删。
+                    // ⚠️ 不能只 `continue` 跳过这一条：那会让后面的记录继续被同一条不可信的通道
+                    // 「判定」并删除 —— 代码看起来仍然有中止逻辑，是最难发现的一种退化。
+                    try? await logStore?.append(
+                        category: .installation,
+                        level: .warning,
+                        message: "已安装列表对账中止：\(deletedBundleID) 的否定答案两次不一致"
+                            + "（首次答「\(entry.probe.logName)」，复核答「\(confirmation.logName)」），"
+                            + "本轮不再删除任何记录；\(Self.triggerText(userInitiated))",
+                        code: "SEAL-RECONCILE-008"
+                    )
+                    return
+                }
+                let label = "\(entry.app.name)（\(deletedBundleID)）"
+                if await delete(entry.app) {
+                    removedCount += 1
+                    removedSummary.append(label)
+                    try? await logStore?.append(
+                        category: .installation,
+                        level: .info,
+                        message: "已安装列表对账删除本地记录：\(label)"
+                            + " —— 设备答「\(entry.probe.logName)」且阳性对照已通过、否定答案复核一致；"
+                            + Self.triggerText(userInitiated),
+                        code: "SEAL-RECONCILE-007"
+                    )
+                }
             case .abortPass:
                 // 走不到这里：`.unavailable` 在上面就已经整轮返回了。
                 // 保留这个分支是为了让「决策函数的三个分支都被显式处理」在形状上成立 ——
@@ -733,10 +786,14 @@ final class AppsViewModel: ObservableObject {
 
         // 有结论就留痕：这条路径此前是**静默**的（不弹窗、不写日志），
         // 用户只能看到 App 凭空消失，排查时连「跑没跑过」都无从判断。
+        // ⚠️ 删除时**把「删掉的是谁」一起写出来**（见上面 `-007` 的说明）：
+        // 只报计数的话，用户说「我的 App 不见了」时这条日志等于什么都没说 ✗。
         try? await logStore?.append(
             category: .installation,
             level: .info,
-            message: "已安装列表对账完成：探测 \(probes.count) 条，删除 \(removedCount) 条",
+            message: "已安装列表对账完成：探测 \(probes.count) 条，删除 \(removedCount) 条"
+                + (removedSummary.isEmpty ? "" : "（删除：\(removedSummary.joined(separator: "、"))）")
+                + "；\(Self.triggerText(userInitiated))",
             code: "SEAL-RECONCILE-005"
         )
     }
@@ -2504,39 +2561,21 @@ final class AppsViewModel: ObservableObject {
         return nil
     }
 
-    /// 「本轮读不到设备状态 ⇒ 一条都没删」时给用户看的东西。
-    ///
-    /// ⚠️ **两个刻意的选择**（2026-09-22 用户报「刷新时弹窗让去检测 VPN」之后改的）：
-    ///
-    /// 1. `recovery` 固定为「知道了」⇒ 按钮**只关弹窗、不做任何跳转**。
-    ///    这是 `performAlertRecovery` 里的既有约定
-    ///   （`guard recovery != "知道了" else { return }`）。
-    ///    原来这里给的是「重新连接手机并完成配对后重试」，而 `settingsRoute` 对
-    ///    `SEAL-INSTALL-` 前缀一律路由到 **LocalDevVPN 设置页** ⇒ 用户一下拉刷新
-    ///    就被推进 VPN 页面。可**实际上什么都没坏**：列表已经从本地库刷新过了，
-    ///    只是「设备端核销」这一轮跳过了 —— 而且真机实测通道 3 秒后就恢复
-    ///    （见 `InstalledAppProbeRetryPolicy` 的说明）。
-    /// 2. 文案必须说清「本轮未改动任何记录」与「稍后会自动重试」。
-    ///    把这种**暂时性**的读不到写成「失败」，用户会以为数据出了问题。
-    ///
-    /// 仍然保留弹窗（而不是彻底静默）是因为：用户**主动**刷新时，如果设备状态读不到，
-    /// 「列表里可能还留着已卸载的 App」这件事必须让用户知情。
-    static func reconcileAbortFailure(detail: String) -> ImportFailure {
-        ImportFailure(
-            title: "暂时读不到设备状态",
-            reason: "未能从设备读取真实已安装应用状态（\(detail)），"
-                + "本轮未改动任何记录，已安装列表保持原样。\n"
-                + "常见于刚启动、或 LocalDevVPN 尚未连上，稍后会自动重试；"
-                + "若一直如此，请到「设置」里确认 LocalDevVPN 已连接。",
-            recovery: "知道了",
-            code: "SEAL-INSTALL-707"
-        )
-    }
-
     /// 日志里的耗时文案（如 `0.3 秒`）。把「快速失败」与「撞满超时」在日志里分开，
     /// 是这条链路唯一能回答「到底是通道还没起来、还是会话已经死了」的手段。
     private static func secondsText(_ seconds: TimeInterval) -> String {
         String(format: "%.1f 秒", seconds)
+    }
+
+    /// 把「这次对账是谁触发的」写进日志。
+    ///
+    /// ⚠️ 为什么值得占这几个字（2026-09-22 构建 201 的真机日志暴露）：
+    /// 那份日志里有 **2 条「撞满超时」的中止**，而我**无法判断**当时是不是用户在下拉刷新
+    /// ⇒ 也就无法判断「用户会不会看到弹窗」✗。触发来源是这条链路排查时**第一个要问的问题**
+    /// （启动/回前台是自动的、用户没有动作；下拉刷新是用户主动做的），
+    /// 所以它必须在日志里，而不是靠事后猜。
+    private static func triggerText(_ userInitiated: Bool) -> String {
+        return userInitiated ? "触发：下拉刷新" : "触发：启动或回到前台"
     }
 
     private static let connectionRecoveryReason = "请确认已连接 Wi-Fi 并开启 LocalDevVPN。若长时间无响应，请在设置中确认 LocalDevVPN 已连接后重试。"
