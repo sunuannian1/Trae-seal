@@ -3761,7 +3761,7 @@ def violations(load=read):
     retry_decision = squash(section_or_empty(retry_policy, "static func shouldRetry(", "\n}"))
     check("guard attemptsSoFar < maxAttempts else { return false }" in retry_decision,
           "R72: 重试必须有次数上限 ✗ —— 否则通道一直不好时下拉刷新会**永远转圈**")
-    check("return elapsed < fastFailureUpperBound" in retry_decision,
+    check("return InstalledAppProbeFailurePolicy.kind(elapsed: elapsed) == .transient" in retry_decision,
           "R72: 只有「快速失败」才允许重试 ✗ —— 撞满超时说明会话已经死了，"
           "再问一次只是再等一个 15 秒（用户看到的是「刷新越来越慢」）")
 
@@ -3843,6 +3843,56 @@ def violations(load=read):
           and "func enabledWithAuthorizationSchedules()" in notif_policy_tests
           and "func disabledNeverSchedules()" in notif_policy_tests,
           "R72: 调度判据必须有真单测 ✗ —— 两个方向（该跳过的没跳过 / 该排的没排）都要钉住")
+
+    # ── R73：只有「会话已死」才允许打断用户（2026-09-22，承接 R72 的同一个用户报障）──────
+    #
+    # R72 给这条路径加了**有界重试**，但真机实测：重试窗口 ≈ 2.2 秒
+    # （3 次尝试 × 1 秒间隔），而通道恢复要 ≈ 3 秒（10:20:33 中止 → 10:21:33 才恢复）
+    # ⇒ 光靠加长窗口只能把假警报的**概率**变小，做不到「不再出现」✗。
+    #
+    # 真正稳的做法是**换判据**：只有「撞满超时 = 会话已死」才值得打断用户
+    #（那时「去查 LocalDevVPN」真的有用）；「快速失败 = 通道还没起来」必须**静默** ——
+    # 本轮**什么都没改**（记录一条都没删），按日志纪律属第③类「条件不满足 ⇒ 跳过」。
+    failure_policy = strip_comments(
+        load("Seal/Core/Maintenance/InstalledAppProbeFailurePolicy.swift")
+    )
+    check("case transient" in failure_policy and "case sessionDead" in failure_policy,
+          "R73: 两种失败形态必须显式命名 ✗ —— 用 `Bool` / 裸值表示会重演"
+          "「失败被折成一个值、调用方再读错」那类坑（本项目最贵的一类）")
+    check("static let fastFailureUpperBound" in failure_policy,
+          "R73: 「多快算快」必须是**一个**具名常量 ✗ —— 写成字面量会让"
+          "「重试判据」与「弹窗判据」各自漂移成两个阈值")
+    failure_kind_body = squash(
+        section_or_empty(failure_policy, "static func kind(elapsed:", "\n    }")
+    )
+    check("return elapsed >= fastFailureUpperBound ? .sessionDead : .transient" in failure_kind_body,
+          "R73: 恰好落在上界上必须算「慢」✗ —— 要与重试判据的 `<` **严格互补**，"
+          "否则同一个耗时既「值得重试」又「会话已死」，两条判据互相打架")
+    attention_body = squash(
+        section_or_empty(failure_policy, "static func deservesUserAttention(", "\n    }")
+    )
+    check("return kind == .sessionDead" in attention_body,
+          "R73: 只有「会话已死」才允许打断用户 ✗ —— 「通道还没起来」也弹窗的话，"
+          "用户每下拉一次刷新就被推进 LocalDevVPN 设置页（真机实测它 3 秒后自己就好了）")
+
+    # 中止弹窗必须**走这条判据**，不能在调用点写死 —— 写死等于「只有会话已死才打断用户」
+    # 失去约束，假警报会原样回来（而日志、单测、守卫都可能照样绿）。
+    reconcile_squashed = squash(reconcile_body)
+    check("InstalledAppProbeFailurePolicy.deservesUserAttention(" in reconcile_squashed,
+          "R73: 中止弹窗必须走纯判据 ✗ —— 在调用点写字面量会让「假警报」回来")
+    kind_at = reconcile_squashed.find("InstalledAppProbeFailurePolicy.kind(elapsed: control.elapsed)")
+    alert_at = reconcile_squashed.find("if userInitiated, deservesAttention {")
+    check(kind_at != -1 and alert_at != -1 and kind_at < alert_at,
+          "R73: 必须先给失败定性、再决定弹不弹 ✗ —— 顺序反了（或判据没接上）等于没生效")
+    check("level: deservesAttention ? .warning : .info" in reconcile_squashed,
+          "R73: 日志级别必须跟着同一条判据走 ✗ —— 快速失败属第③类「条件不满足 ⇒ 跳过」，"
+          "记成 warning 会把真问题淹在噪声里（真机日志里 90 分钟 10 条全是这种假 warning）")
+
+    probe_failure_tests = load("SealTests/Maintenance/InstalledAppProbeFailurePolicyTests.swift")
+    check("func onlySessionDeadDeservesUserAttention()" in probe_failure_tests
+          and "func boundaryIsComplementaryToRetryDecision()" in probe_failure_tests,
+          "R73: 弹窗判据必须有真单测 ✗ —— 它的错法不崩、不编译失败，"
+          "只在真机上表现为「弹窗变多」或「坏了也没人知道」，两个方向都要钉住")
 
     handoff_failures = HANDOFF_GUARD["violations"](load)
     checks += 6
@@ -5517,7 +5567,7 @@ def main():
         # 把「只重试快速失败」改成「一律重试」⇒ 撞满 15 秒超时的会话也被重试，
         # 刷新一次比一次慢（15 秒 × 3 次）✓ 报红。
         ("Seal/Core/Maintenance/InstalledAppProbeRetryPolicy.swift",
-         "        return elapsed < fastFailureUpperBound",
+         "        return InstalledAppProbeFailurePolicy.kind(elapsed: elapsed) == .transient",
          "        return true",
          "R72:"),
         # 把「只重试 .unavailable」放开 ⇒ `.notInstalled` 也会被重问一次，
@@ -5581,6 +5631,41 @@ def main():
          "    func notAuthorizedIsSkippedInsteadOfAttempted() {",
          "    func notAuthorizedIsSkippedInsteadOfAttemptedRenamed() {",
          "R72:"),
+        # ── R73：只有「会话已死」才允许打断用户（2026-09-22 同一报障的**判据**修复）──
+        # 把上界判据从 `>=` 改成 `>` ⇒ 与重试判据的 `<` 不再互补，
+        # 同一个耗时既「值得重试」又「会话已死」✓ 报红。
+        ("Seal/Core/Maintenance/InstalledAppProbeFailurePolicy.swift",
+         "        return elapsed >= fastFailureUpperBound ? .sessionDead : .transient",
+         "        return elapsed > fastFailureUpperBound ? .sessionDead : .transient",
+         "R73:"),
+        # 把「只有会话已死才打断用户」放开 ⇒ 通道还没起来也弹窗，
+        # 用户每下拉一次刷新就被推进 LocalDevVPN 设置页（就是用户报的那个 bug）✓ 报红。
+        ("Seal/Core/Maintenance/InstalledAppProbeFailurePolicy.swift",
+         "        return kind == .sessionDead",
+         "        return true",
+         "R73:"),
+        # 把两种形态之一改名 ⇒ 证明「必须显式命名」的断言真的会红 ✓。
+        ("Seal/Core/Maintenance/InstalledAppProbeFailurePolicy.swift",
+         "        case transient",
+         "        case pending",
+         "R73:"),
+        # 把弹窗的判据闸门摘掉（退回「只要用户下拉就弹」）✓ 报红 ——
+        # 这正是用户报的那个形态，且**代码看起来仍然「有弹窗逻辑」**，最难发现。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "            if userInitiated, deservesAttention {",
+         "            if userInitiated {",
+         "R73:"),
+        # 把日志级别固定成 warning ⇒ 「条件不满足 ⇒ 跳过」又变成 warning，
+        # 真问题会被淹在噪声里（真机 90 分钟 10 条假 warning）✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "                level: deservesAttention ? .warning : .info,",
+         "                level: .warning,",
+         "R73:"),
+        # 把弹窗判据的单测改名 ⇒ 证明「必须有真单测」的断言真的会红 ✓。
+        ("SealTests/Maintenance/InstalledAppProbeFailurePolicyTests.swift",
+         "    func onlySessionDeadDeservesUserAttention() {",
+         "    func onlySessionDeadDeservesUserAttentionRenamed() {",
+         "R73:"),
     ]
     # 变异检查每一遍都会把所有源文件**重新读一遍**：200+ 文件 × 90 多遍 ≈ 2 万次磁盘读。
     # 本仓在 OneDrive 同步目录里，单次读延迟不稳定 —— 实测同一份代码整轮耗时在

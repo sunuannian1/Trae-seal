@@ -13,18 +13,12 @@ import Foundation
 /// ⇒ 那是**通道还没起来**，不是「设备上没有这个 App」。
 ///
 /// 对照只问一次，就必然把「还没起来」判成「通道不可信」⇒ 用户每下拉一次刷新
-/// 就吃一个弹窗 ✗。重试一次（或两次）就能把这一类**假警报**消掉。
+/// 就吃一个弹窗 ✗。有界重试能把这一类**假警报**消掉一部分。
 ///
-/// ## 两种失败必须分开（这是本判据的全部内容）
-///
-/// 底层是一条同步阻塞 FFI（`Minimuxer.isAppInstalled`，上限 `queryTimeoutSeconds`）。
-/// 真机上它有两种**形态完全不同**的失败，`DeviceProfileCleaner` 早就按耗时区分过
-///（日志里的 `查询失败(0.0s)` 与 `查询失败(15.0s)`）：
-///
-/// - **快速失败**（≈0 秒就抛）：RSD 会话**还没建好**，FFI 立刻返回错误
-///   ⇒ 等一会儿再问多半就好了 ⇒ **值得重试**；
-/// - **慢速失败**（撞满 15 秒超时）：会话**已经死了**（隧道断了 / VPN 关了）
-///   ⇒ 再问一次只是**再等一个 15 秒** ⇒ **不值得重试**。
+/// ⚠️ **重试只是缓解，判据本身在 `InstalledAppProbeFailurePolicy`** ——
+/// 两种失败形态（快速失败 / 撞满超时）的定义、以及「哪种才该打断用户」都在那一份里。
+/// 这里只回答「还要不要再问一次」，并且**复用同一个阈值**，
+/// 不要在第二个地方重写「多快算快」。
 ///
 /// 做成纯函数是因为它的错法同样是「不崩、不编译失败，只在真机上表现为
 /// 弹窗变多或刷新变慢」，只能靠单测 + 守卫断言钉住。
@@ -37,9 +31,6 @@ enum InstalledAppProbeRetryPolicy {
     /// 两次尝试之间的间隔（秒）。
     static let retryDelay: TimeInterval = 1.0
 
-    /// 「快速失败」的耗时上界（秒）。达到或超过它，说明这次是**撞满超时**。
-    static let fastFailureUpperBound: TimeInterval = 3.0
-
     /// 刚刚那次失败之后，还要不要再问一次。
     ///
     /// - Parameters:
@@ -50,7 +41,7 @@ enum InstalledAppProbeRetryPolicy {
         // ① 次数上限：必须有界。
         guard attemptsSoFar < maxAttempts else { return false }
         // ② 只有**快速失败**才值得重试：慢速失败 = 会话已经死了，
-        //    再问一次只是再等一个 15 秒超时（用户看到的就是「刷新一直转圈」）。
-        return elapsed < fastFailureUpperBound
+        //    再问一次只是再等一个超时（用户看到的就是「刷新一直转圈」）。
+        return InstalledAppProbeFailurePolicy.kind(elapsed: elapsed) == .transient
     }
 }

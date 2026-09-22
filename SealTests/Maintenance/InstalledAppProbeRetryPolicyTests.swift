@@ -27,7 +27,7 @@ struct InstalledAppProbeRetryPolicyTests {
         // 恰好落在上界上也算「慢」—— 判据是 `<`，不是 `<=`。
         #expect(
             InstalledAppProbeRetryPolicy.shouldRetry(
-                elapsed: InstalledAppProbeRetryPolicy.fastFailureUpperBound,
+                elapsed: InstalledAppProbeFailurePolicy.fastFailureUpperBound,
                 attemptsSoFar: 1
             ) == false
         )
@@ -49,11 +49,13 @@ struct InstalledAppProbeRetryPolicyTests {
 
     /// 上界与间隔必须是**有限且合理**的值。
     ///
+    /// ⚠️ 「多快算快」这个阈值住在 `InstalledAppProbeFailurePolicy`（弹窗判据也要用它），
+    /// 这里只**引用**它 —— 两处各写一份必然会漂移成两个阈值。
     /// 太大 ⇒ 把「会话已死」也当成快速失败，白等三轮；
     /// 太小 ⇒ 真机上那种「0.x 秒抛错」一次都重试不到，等于没修。
     @Test
     func boundsAreFiniteAndSane() {
-        let bound = InstalledAppProbeRetryPolicy.fastFailureUpperBound
+        let bound = InstalledAppProbeFailurePolicy.fastFailureUpperBound
         #expect(bound > 0)
         #expect(bound < BlockingCall.queryTimeoutSeconds)
         #expect(InstalledAppProbeRetryPolicy.retryDelay > 0)

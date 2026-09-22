@@ -7,6 +7,25 @@
 
 ## 常犯坑位
 
+- 🔴 **「加了重试」不等于「消掉了假警报」—— 判据错的时候，加长窗口只是把概率变小**（2026-09-22）。
+  实例：已安装列表对账的**阳性对照**失败会让用户吃一个模态弹窗，而按钮经 `settingsRoute`
+  把 `SEAL-INSTALL-` 前缀**一律路由到 LocalDevVPN 设置页** ⇒ 用户每下拉一次刷新就被推进 VPN 页面，
+  而**实际上什么都没坏**（列表已从本地库刷新过，只是「设备端核销」这一轮跳过了）。
+  上一轮的做法是**加有界重试**，但真机一量：**重试窗口 ≈ 2.2 秒（3 次 × 1 秒间隔），
+  而通道恢复要 ≈ 3 秒**（10:20:33 中止 → 10:21:33 恢复）⇒ 窗口是**边际的**，假警报照样出现 ✗。
+  - **判据**：修「偶发」的问题时先问一句 **「我是在提高成功率，还是在改判据？」** ——
+    提高成功率只能把概率变小，而**概率小 ≠ 不出现**（用户照样会报「有时候还是…」）；
+    要「不再出现」只能**换判据** ✓。
+  - **正确的判据**：底层是同一条同步 FFI，真机上有两种**形态完全不同**的失败
+    （`DeviceProfileCleaner` 早就按耗时区分过：`查询失败(0.0s)` vs `查询失败(15.0s)`）——
+    **快速失败 = 通道还没起来**（等一会儿就好）／**撞满超时 = 会话已经死了**（要用户去查 VPN）
+    ⇒ **只有后者才允许打断用户**；前者**静默**（本轮什么都没改 ⇒ 第③类「条件不满足 ⇒ 跳过」，
+    连日志级别都该是 info 而不是 warning）。判据 `InstalledAppProbeFailurePolicy`，守卫 **R73**。
+  - **连带判据**：「要不要打扰用户」与「日志级别」必须**共用同一个纯判据** ——
+    分两处写会出现「日志说没事、弹窗却弹出来」，而单测与守卫都可能照样绿 ✗。
+  - 同族：本仓那条「某个状态下『什么都不做』的分支，要问一句『那谁来推进这件事』」，
+    以及「一次『什么都没做』的失败不配用会跳转的模态弹窗」。
+
 - 🔴 **「跑完必然留痕」≠「能区分没跑完」—— 中间态静默是排障最贵的形态**（2026-09-21）。
   实例：安装通道检测（`SettingsViewModel.runInstallChannelCheck`）按设计**只要跑完就必然写一条**
   （成功写 `successMessage`，失败走 `finishInstallChannelCheckWithFailure` 写「LocalDevVPN 检测失败」）
@@ -575,6 +594,47 @@
 ---
 
 ## 历史记录
+
+### 2026-09-22 · 刷新时的 VPN 假警报：把弹窗判据从「问一次没答对」换成「会话已死」
+
+**现象**（用户原话）：「把你发现的问题也修复，因为**有时候刷新还是出现弹窗让去检测 VPN**。」
+真机日志（构建 199）里 `SEAL-RECONCILE-003`（阳性对照未通过 ⇒ 整轮不删）在 **90 分钟出现 10 次**，
+每次都是 `com.mjorb.seal.CT8QZ7352B：查询失败`，而**同一条通道 3 秒后就恢复正常**
+（10:21:30 中止 → 10:21:33 完成「探测 2 条，删除 0 条」）⇒ 那是「通道还没起来」，不是「通道不可信」。
+
+**根因（两层）**
+
+1. 上一轮的修复是**加有界重试**（3 次 × 1 秒间隔），而真机量出来
+   **重试窗口 ≈ 2.2 秒 < 通道恢复 ≈ 3 秒** ⇒ 窗口是**边际的**，`userInitiated` 时照样弹窗 ✗
+   —— **提高成功率 ≠ 改判据**（概率变小不等于不出现）。
+2. 弹窗按钮经 `performAlertRecovery` → `settingsRoute` 对 **`SEAL-INSTALL-` 前缀一律路由到
+   `.localDevVPN`** ⇒ 用户被推进「检测当前 VPN…」那个页面，而这一轮**什么都没改**
+   （列表已从本地库刷新过，只是设备端核销跳过了）。
+
+**修复**
+
+- 新增 `Seal/Core/Maintenance/InstalledAppProbeFailurePolicy.swift`（纯判据）：
+  `Kind = .transient / .sessionDead`、`fastFailureUpperBound = 3.0`、`kind(elapsed:)`、
+  `deservesUserAttention(_:)`（**只有** `.sessionDead` 为真）。
+- `InstalledAppProbeRetryPolicy.shouldRetry` 改为**复用同一份判据**
+  （`InstalledAppProbeFailurePolicy.kind(elapsed: elapsed) == .transient`）
+  ⇒ 阈值只有一处，两条判据**严格互补**（`>=` vs `<`），不会漂移。
+- `AppsViewModel.reconcileInstalledAppsWithDevice` 的阳性对照中止分支：**先定性、再决定** ——
+  日志级别 `deservesAttention ? .warning : .info`，弹窗只在 `userInitiated && deservesAttention` 时设置。
+- `-004`（阳性对照**通过之后**逐条查询失败）**刻意保持弹窗**：那时通道几秒前还是好的，
+  随后立刻失败 = 「通道在本次对账中途死掉」，去查 VPN 确实有用；若通道一直没起来，
+  阳性对照那一步就拦下了（且是静默的），到不了这里。这个**不对称**已写进代码注释。
+
+**守卫与测试**
+
+- 守卫 **R73**（7 条断言 ＋ 6 个变异锚点）；R72 的 1 条断言与 1 个锚点同步改成**委派形态**
+  （旧锚点钉的是 `return elapsed < fastFailureUpperBound`，那个常量已搬到新判据里）。
+- 单测 `SealTests/Maintenance/InstalledAppProbeFailurePolicyTests.swift`（4 条），其中
+  `boundaryIsComplementaryToRetryDecision()` 钉住「上界处两条判据严格互补」。
+- 文档：`AGENTS.md` §4、`docs/qa/log-code-index.md` 的 `-003` 行与说明。
+
+**验证状态**：⏳ **待真机** —— 判据是「下拉刷新**不再**出现让去检测 VPN 的弹窗」；
+设备真断（VPN 关）时仍应弹窗且**不跳转**、文案含「本轮未改动任何记录」。
 
 ### 2026-09-21 · 已安装列表「静默删数据」：把描述文件回收的三件套补到对账路径
 

@@ -639,7 +639,8 @@ final class AppsViewModel: ObservableObject {
         //（10:21:30 中止 → 10:21:33 完成「探测 2 条，删除 0 条」）。
         // 原来只问一次 ⇒ 每次都把「还没起来」当成「通道不可信」⇒
         // 用户一下拉刷新就吃一个弹窗（用户原话：「有时候刷新还是出现弹窗让去检测VPN」）✗。
-        // 重试判据见 `InstalledAppProbeRetryPolicy`（只重试快速失败、且有次数上限）。
+        // 重试判据见 `InstalledAppProbeRetryPolicy`（只重试快速失败、且有次数上限）；
+        // 「哪种失败才该弹窗」见 `InstalledAppProbeFailurePolicy`。
         let control = await InstalledAppDeviceVerifier.probeResilient(bundleIdentifier: controlBundleID)
         let positiveControlPassed = control.probe == .installed
         if control.attempts > 1, positiveControlPassed {
@@ -654,16 +655,25 @@ final class AppsViewModel: ObservableObject {
             )
         }
         guard positiveControlPassed else {
+            // ⚠️ **先给这次失败定性，再决定要不要打扰用户**（判据是纯函数，单测与守卫都钉在它上）。
+            // 只有「撞满超时 = 会话已死」才值得弹窗（那时「去查 LocalDevVPN」真的有用）；
+            // 「快速失败 = 通道还没起来」必须**静默** —— 真机实测它 3 秒后自己就好了，
+            // 而弹窗的按钮会被 `settingsRoute` 路由到 LocalDevVPN 设置页
+            // ⇒ 每下拉一次刷新就假警报一次（用户原话：「有时候刷新还是出现弹窗让去检测VPN」）。
+            // 重试窗口（~2.2 秒）短于通道恢复（~3 秒），所以光靠重试消不掉这一类 —— 判据才是关键。
+            let failureKind = InstalledAppProbeFailurePolicy.kind(elapsed: control.elapsed)
+            let deservesAttention = InstalledAppProbeFailurePolicy.deservesUserAttention(failureKind)
             try? await logStore?.append(
                 category: .installation,
-                level: .warning,
+                // 级别跟着同一条判据走：快速失败属第③类「条件不满足 ⇒ 跳过」，不是 warning。
+                level: deservesAttention ? .warning : .info,
                 message: "已安装列表对账中止：阳性对照未通过"
                     + "（\(controlBundleID)：\(control.probe.logName)，"
                     + "尝试 \(control.attempts) 次，末次耗时 \(Self.secondsText(control.elapsed))），"
                     + "本轮不删除任何记录",
                 code: "SEAL-RECONCILE-003"
             )
-            if userInitiated {
+            if userInitiated, deservesAttention {
                 alertFailure = Self.reconcileAbortFailure(
                     detail: "\(control.probe.logName)，末次耗时 \(Self.secondsText(control.elapsed))"
                 )
@@ -682,6 +692,10 @@ final class AppsViewModel: ObservableObject {
             guard let bundleIdentifier = installedBundleIdentifier(for: app) else { continue }
             let probe = await InstalledAppDeviceVerifier.probe(bundleIdentifier: bundleIdentifier)
             if probe == .unavailable {
+                // ⚠️ 这里**刻意**与上面阳性对照分支不对称：走到这里说明阳性对照**刚刚通过**
+                //（通道几秒前还是好的），随后立刻失败 ⇒ 那是「通道在本次对账中途死掉」，
+                // 不是「还没起来」，所以**照旧弹窗**（此时去查 LocalDevVPN 确实有用）。
+                // 若通道一直没起来，阳性对照那一步就已经拦下了（且是静默的），到不了这里。
                 try? await logStore?.append(
                     category: .installation,
                     level: .warning,
