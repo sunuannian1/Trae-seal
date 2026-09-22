@@ -51,16 +51,37 @@ final class ExpiryNotificationScheduler {
         )
     }
 
+    /// 重排到期提醒，并**把「为什么没排」交出去**。
+    ///
+    /// - Returns: 本次的处置。调用方据此区分「正常跳过」（第③类，**不要**写 error 日志）
+    ///   与「真的失败了」（第②类，由 `throws` 抛出、调用方带底层原因留痕）。
+    ///
+    /// ⚠️ 授权预检必须在**调用 `add` 之前**：系统没给权限时 `add` 必然抛错，
+    /// 而那是**已知条件**（设置页本来就在显示授权状态），不是运行期失败。
+    /// 不预检的话，每次刷新都会拿到一条必然失败的 error 日志 ——
+    /// 2026-09-22 真机日志里那 **100 条** `SEAL-NOTIFY-002a` 就是这么来的。
+    @discardableResult
     func reschedule(
         apps: [AppRecord],
         enabled: Bool,
         leadHours: Int = NotificationPreferences.fixedLeadHours
-    ) async throws {
+    ) async throws -> ExpiryNotificationSchedulingPolicy.Decision {
+        // ⚠️ 顺序：**先清掉上一轮的残留，再判要不要排**。
+        // 授权被撤 / 开关被关之后，上一轮排好的提醒也必须撤掉，
+        // 否则「关掉提醒」只影响下一次调度，旧提醒照旧会响。
         let existing = await center.pendingNotificationRequests()
             .map(\.identifier)
             .filter { $0.hasPrefix(identifierPrefix) }
         center.removePendingNotificationRequests(withIdentifiers: existing)
-        guard enabled else { return }
+
+        let authorization = ExpiryNotificationSchedulingPolicy.authorization(
+            from: await center.notificationSettings().authorizationStatus
+        )
+        let decision = ExpiryNotificationSchedulingPolicy.decision(
+            enabled: enabled,
+            authorization: authorization
+        )
+        guard decision == .schedule else { return decision }
 
         for plan in planner.plans(for: apps, now: Date()) {
             let content = UNMutableNotificationContent()
@@ -82,6 +103,7 @@ final class ExpiryNotificationScheduler {
             )
             try await center.add(request)
         }
+        return decision
     }
 
     private static let timeFormatter: DateFormatter = {

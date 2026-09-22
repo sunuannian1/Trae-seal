@@ -3681,10 +3681,10 @@ def violations(load=read):
     )
     check("guard isReconcilingInstalledApps == false else {" in reconcile_body,
           "R71: 已安装列表对账必须单飞")
-    check("let controlProbe = await InstalledAppDeviceVerifier.probe(bundleIdentifier: controlBundleID)"
+    check("let control = await InstalledAppDeviceVerifier.probeResilient(bundleIdentifier: controlBundleID)"
           in reconcile_body,
           "R71: 阳性对照必须真的去问设备")
-    check("let positiveControlPassed = controlProbe == .installed" in reconcile_body,
+    check("let positiveControlPassed = control.probe == .installed" in reconcile_body,
           "R71: 阳性对照必须是真的设备查询结果")
     check("guard positiveControlPassed else {" in reconcile_body,
           "R71: 阳性对照没过必须整轮不删")
@@ -3706,7 +3706,9 @@ def violations(load=read):
     check("return" in abort_body,
           "R71: 查询失败必须中止整轮")
     # 阳性对照必须在**删任何一条之前**跑完。
-    control_at = reconcile_body.find("InstalledAppDeviceVerifier.probe(bundleIdentifier: controlBundleID)")
+    control_at = reconcile_body.find(
+        "InstalledAppDeviceVerifier.probeResilient(bundleIdentifier: controlBundleID)"
+    )
     remove_at = reconcile_body.find("await delete(")
     check(control_at != -1 and remove_at != -1 and control_at < remove_at,
           "R71: 阳性对照必须在删任何一条之前跑完")
@@ -3730,6 +3732,117 @@ def violations(load=read):
           and "func installedRecordIsAlwaysKept()" in reconcile_tests
           and "func abortPassStopsTheWholePass()" in reconcile_tests,
           "R71: 这四条判据必须有真单测 —— 「静默删数据」的错法只有单测能钉住")
+
+    # ── R72：两个「看着像故障、其实不是」的假警报（2026-09-22 用户报障）────────────
+    #
+    # 用户：「把你发现的问题也修复，因为**有时候刷新还是出现弹窗让去检测VPN**」。
+    # 真机日志（构建 199，`Seal-log(30).txt`）给出两条线索：
+    #
+    # ① `SEAL-RECONCILE-003`（阳性对照未通过 ⇒ 整轮不删）在 **90 分钟里出现 10 次**，
+    #    每次都是同一个 Bundle ID，而**同一条通道 3 秒后就正常了**
+    #    （10:21:30 中止 → 10:21:33 完成「探测 2 条，删除 0 条」）
+    #    ⇒ 那不是「通道不可信」，是**通道还没起来**。
+    #    而 `userInitiated`（下拉刷新）分支给的是一个**模态弹窗**，按钮文案
+    #    「重新连接手机并完成配对后重试」经 `settingsRoute` 把 `SEAL-INSTALL-` 前缀
+    #    一律路由到 **LocalDevVPN 设置页** ⇒ 用户每下拉一次就被推进 VPN 页面，
+    #    而**实际上什么都没坏**（列表已从本地库刷新过，只是设备端核销跳过了）。
+    #
+    # ② `SEAL-NOTIFY-002a`（通知调度失败）以 error 级别出现 **100 次**，
+    #    **每次都是同一句「通知调度失败」**，不带任何底层信息 ⇒ 无法归因。
+    #    触发点是「每次 `load()` 之后的后台重排」⇒ 刷新一次多一条。
+    #    其中一大类根本不是失败：iOS 没给通知权限时 `add` 必然抛错，
+    #    那是**已知条件**（设置页在显示授权状态），属于第③类「条件不满足 ⇒ 跳过」。
+    #
+    # ⚠️ 这一组断言**不许削弱** R71 的安全网：重试只允许发生在 `.unavailable` 上 ——
+    # `.installed` / `.notInstalled` 是确定性答案，重试等于给同一个问题一次**改口**的机会。
+    retry_policy = strip_comments(
+        load("Seal/Core/Maintenance/InstalledAppProbeRetryPolicy.swift")
+    )
+    retry_decision = squash(section_or_empty(retry_policy, "static func shouldRetry(", "\n}"))
+    check("guard attemptsSoFar < maxAttempts else { return false }" in retry_decision,
+          "R72: 重试必须有次数上限 ✗ —— 否则通道一直不好时下拉刷新会**永远转圈**")
+    check("return elapsed < fastFailureUpperBound" in retry_decision,
+          "R72: 只有「快速失败」才允许重试 ✗ —— 撞满超时说明会话已经死了，"
+          "再问一次只是再等一个 15 秒（用户看到的是「刷新越来越慢」）")
+
+    resilient_body = squash(section_or_empty(
+        verifier, "static func probeResilient(", "private static func singleProbe("
+    ))
+    check("guard probe == .unavailable else {" in resilient_body,
+          "R72: 重试只允许发生在 `.unavailable` 上 ✗ —— "
+          "`.installed` / `.notInstalled` 是确定性答案，重试等于给它一次**改口**的机会，"
+          "而「同一台设备先后给出不同答案」正是 2026-09-21「列表全没了」的形态")
+    check("InstalledAppProbeRetryPolicy.shouldRetry(" in resilient_body,
+          "R72: 重试判据必须走纯函数 ✗ —— 在调用点写字面量会让「有界」与"
+          "「只重试快速失败」两条判据同时失去约束")
+    check("InstalledAppProbeRetryPolicy.retryDelay" in resilient_body,
+          "R72: 重试间隔必须取自策略常量")
+
+    check("SEAL-RECONCILE-006" in reconcile_body,
+          "R72: 重试救回来的那一次也要留痕 ✗ —— 否则「弹窗变少了」到底是重试起效、"
+          "还是通道恰好一直健康，事后完全分不出来")
+    check(r"尝试 \(control.attempts) 次，末次耗时" in reconcile_body,
+          "R72: `-003` 必须带上**尝试次数 + 耗时** ✗ —— 分不清「快速失败（通道还没起来）」"
+          "与「撞满超时（会话已死）」，这条日志仍然无法归因")
+
+    abort_alert = squash(section_or_empty(
+        apps_vm, "static func reconcileAbortFailure(", "\n    }"
+    ))
+    check('recovery: "知道了"' in abort_alert,
+          "R72: 对账中止的弹窗**不许跳转** ✗ —— `settingsRoute` 对 `SEAL-INSTALL-` 前缀"
+          "一律路由到 LocalDevVPN 设置页，而「读不到设备状态」最常见的原因是"
+          "**通道还没起来**（真机实测 3 秒后即恢复）⇒ 那是假警报")
+    check("本轮未改动任何记录" in abort_alert,
+          "R72: 中止弹窗必须说清「本轮未改动任何记录」✗ —— 否则用户会以为数据出了问题")
+    check(reconcile_body.count("Self.reconcileAbortFailure(") == 2,
+          "R72: 两个中止分支（阳性对照失败 / 逐条查询失败）必须共用同一个弹窗构造 ✗")
+
+    notif_policy = strip_comments(
+        load("Seal/Core/Notifications/ExpiryNotificationSchedulingPolicy.swift")
+    )
+    notif_decision = squash(section_or_empty(notif_policy, "static func decision(enabled: Bool", "\n}"))
+    check("case .denied, .notDetermined: return .skipNotAuthorized" in notif_decision,
+          "R72: 系统没给通知权限时必须**跳过**、而不是去调 `add` ✗ —— "
+          "那是**已知条件**（设置页在显示授权状态），不是运行期失败；"
+          "不跳过就等于每次刷新写一条必然失败的 error 日志")
+    check("guard enabled else { return .skipDisabled }" in notif_decision,
+          "R72: 提醒开关关着时不许去排")
+
+    scheduler = strip_comments(
+        load("Seal/Infrastructure/Notifications/ExpiryNotificationScheduler.swift")
+    )
+    reschedule_body = squash(section_or_empty(
+        scheduler, "func reschedule(", "private static let timeFormatter"
+    ))
+    check("ExpiryNotificationSchedulingPolicy.decision(" in reschedule_body
+          and "guard decision == .schedule else { return decision }" in reschedule_body,
+          "R72: 调度前必须走授权预检 ✗ —— 系统没给权限时 `add` 必然抛错，"
+          "预检是那 100 条 `SEAL-NOTIFY-002a` 唯一的闸门")
+    authorization_at = reschedule_body.find("authorizationStatus")
+    add_at = reschedule_body.find("try await center.add(request)")
+    check(authorization_at != -1 and add_at != -1 and authorization_at < add_at,
+          "R72: 授权预检必须在**调用 `add` 之前** ✗ —— 放到后面等于没预检")
+
+    notify_error = squash(section_or_empty(
+        apps_vm, "let nsError = error as NSError", 'code: "SEAL-NOTIFY-002a"'
+    ))
+    check("nsError.domain" in notify_error
+          and "nsError.code" in notify_error
+          and "nsError.localizedDescription" in notify_error,
+          "R72: 通知调度失败的错误日志必须带**底层原因** ✗ —— "
+          "原来只写一句「通知调度失败」，真机日志里 100 条一模一样的行完全无法归因")
+
+    probe_retry_tests = load("SealTests/Maintenance/InstalledAppProbeRetryPolicyTests.swift")
+    check("func fastFailureIsRetried()" in probe_retry_tests
+          and "func timeoutFailureIsNotRetried()" in probe_retry_tests
+          and "func attemptsAreBounded()" in probe_retry_tests,
+          "R72: 重试判据必须有真单测 ✗ —— 它的错法不崩、"
+          "只在真机上表现为「刷新变慢」或「刷新永远转圈」")
+    notif_policy_tests = load("SealTests/Notifications/ExpiryNotificationSchedulingPolicyTests.swift")
+    check("func notAuthorizedIsSkippedInsteadOfAttempted()" in notif_policy_tests
+          and "func enabledWithAuthorizationSchedules()" in notif_policy_tests
+          and "func disabledNeverSchedules()" in notif_policy_tests,
+          "R72: 调度判据必须有真单测 ✗ —— 两个方向（该跳过的没跳过 / 该排的没排）都要钉住")
 
     handoff_failures = HANDOFF_GUARD["violations"](load)
     checks += 6
@@ -5374,7 +5487,7 @@ def main():
         # 阳性对照恒通过（把对照结果写成字面量 true）—— 对照形同虚设，
         # 通道不可信时照样全删。形态判据与单测都还在，代码看起来完全正常。
         ("Seal/Features/Apps/AppsViewModel.swift",
-         "        let positiveControlPassed = controlProbe == .installed",
+         "        let positiveControlPassed = control.probe == .installed",
          "        let positiveControlPassed = true",
          "R71: 阳性对照必须是真的设备查询结果"),
         # 去掉 Seal 自身的排除：Seal 自己的记录重新进入删除路径
@@ -5395,6 +5508,79 @@ def main():
          "                return\n            }\n            probes.append((app, probe))",
          "                continue\n            }\n            probes.append((app, probe))",
          "R71: 查询失败必须中止整轮"),
+        # ── R72：两个「看着像故障、其实不是」的假警报（2026-09-22 用户报「刷新还是弹窗让去检测VPN」）──
+        # 把「有界重试」改成无界 ⇒ 通道一直不好时下拉刷新**永远转圈** ✓ 报红。
+        ("Seal/Core/Maintenance/InstalledAppProbeRetryPolicy.swift",
+         "        guard attemptsSoFar < maxAttempts else { return false }",
+         "        guard true else { return false }",
+         "R72:"),
+        # 把「只重试快速失败」改成「一律重试」⇒ 撞满 15 秒超时的会话也被重试，
+        # 刷新一次比一次慢（15 秒 × 3 次）✓ 报红。
+        ("Seal/Core/Maintenance/InstalledAppProbeRetryPolicy.swift",
+         "        return elapsed < fastFailureUpperBound",
+         "        return true",
+         "R72:"),
+        # 把「只重试 .unavailable」放开 ⇒ `.notInstalled` 也会被重问一次，
+        # 等于给同一个问题一次**改口**的机会 —— 那正是 2026-09-21「列表全没了」的形态 ✓ 报红。
+        ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
+         "            guard probe == .unavailable else {",
+         "            guard true else {",
+         "R72:"),
+        # 把「重试判据走纯函数」退回字面量 ⇒ 「有界」与「只重试快速失败」两条同时失去约束 ✓ 报红。
+        ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
+         "            guard InstalledAppProbeRetryPolicy.shouldRetry(\n"
+         "                elapsed: elapsed,\n"
+         "                attemptsSoFar: attempts\n"
+         "            ) else {",
+         "            guard attempts < 3 else {",
+         "R72:"),
+        # 去掉「重试救回来也要留痕」⇒ 「弹窗变少了」无法归因 ✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         '                code: "SEAL-RECONCILE-006"',
+         '                code: "SEAL-RECONCILE-999"',
+         "R72:"),
+        # 把 `-003` 的「尝试次数 + 耗时」删掉 ⇒ 又回到分不清「还没起来」与「会话已死」✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         r'                    + "尝试 \(control.attempts) 次，末次耗时 \(Self.secondsText(control.elapsed))），"',
+         r'                    + "（略）"',
+         "R72:"),
+        # 把中止弹窗的按钮改回「会跳转」的文案 ⇒ `settingsRoute` 会把用户推进 LocalDevVPN
+        # 设置页，而最常见的成因只是通道还没起来（真机实测 3 秒后恢复）✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         '            recovery: "知道了",\n            code: "SEAL-INSTALL-707"',
+         '            recovery: "检查是否打开 LocalDevVPN",\n            code: "SEAL-INSTALL-707"',
+         "R72:"),
+        # 把中止弹窗里「本轮未改动任何记录」删掉 ⇒ 用户会以为数据出了问题 ✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         '                + "本轮未改动任何记录，已安装列表保持原样。\\n"',
+         '                + "已安装列表保持原样。\\n"',
+         "R72:"),
+        # 把「没给权限就跳过」改成「照样去排」⇒ 每次刷新都会拿到一条必然失败的 error 日志，
+        # 也就是那 100 条 `SEAL-NOTIFY-002a` 的成因 ✓ 报红。
+        ("Seal/Core/Notifications/ExpiryNotificationSchedulingPolicy.swift",
+         "        case .denied, .notDetermined:\n            return .skipNotAuthorized",
+         "        case .denied, .notDetermined:\n            return .schedule",
+         "R72:"),
+        # 把授权预检挪到 `add` 之后（等价于没有预检）✓ 报红。
+        ("Seal/Infrastructure/Notifications/ExpiryNotificationScheduler.swift",
+         "        guard decision == .schedule else { return decision }",
+         "        _ = decision",
+         "R72:"),
+        # 把通知调度失败日志的底层原因删掉 ⇒ 又变回「一句无法归因的话」✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         r'\(nsError.localizedDescription)"',
+         r'"',
+         "R72:"),
+        # 把「有界重试」的单测改名 ⇒ 证明「必须有真单测」的断言真的会红 ✓。
+        ("SealTests/Maintenance/InstalledAppProbeRetryPolicyTests.swift",
+         "    func fastFailureIsRetried() {",
+         "    func fastFailureIsRetriedRenamed() {",
+         "R72:"),
+        # 把「没给权限就跳过」的单测改名 ⇒ 同上 ✓。
+        ("SealTests/Notifications/ExpiryNotificationSchedulingPolicyTests.swift",
+         "    func notAuthorizedIsSkippedInsteadOfAttempted() {",
+         "    func notAuthorizedIsSkippedInsteadOfAttemptedRenamed() {",
+         "R72:"),
     ]
     # 变异检查每一遍都会把所有源文件**重新读一遍**：200+ 文件 × 90 多遍 ≈ 2 万次磁盘读。
     # 本仓在 OneDrive 同步目录里，单次读延迟不稳定 —— 实测同一份代码整轮耗时在

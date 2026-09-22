@@ -441,9 +441,27 @@ final class AppsViewModel: ObservableObject {
                 if let notificationScheduler = self.notificationScheduler,
                    let notificationPreferences = self.notificationPreferences {
                     do {
-                        try await notificationScheduler.reschedule(apps: fetched, enabled: notificationPreferences.isEnabled, leadHours: notificationPreferences.leadHours)
+                        // 处置（`.schedule` / `.skipDisabled` / `.skipNotAuthorized`）**刻意不写日志**：
+                        // 前两种是正常状态；第三种（系统没给通知权限）属于「条件不满足 ⇒ 跳过」
+                        // 的第③类，而且设置页本来就在显示授权状态。
+                        // ⚠️ 别在这里补一条「跳过」日志：这条路径每次 `load()` 都跑，
+                        // 补一条就等于每次下拉刷新多一行 —— 那正是要被消掉的噪音。
+                        _ = try await notificationScheduler.reschedule(
+                            apps: fetched,
+                            enabled: notificationPreferences.isEnabled,
+                            leadHours: notificationPreferences.leadHours
+                        )
                     } catch {
-                        try? await self.logStore?.append(category: .system, level: .error, message: "通知调度失败", code: "SEAL-NOTIFY-002a")
+                        // ⚠️ **必须带上底层原因**。原来这里只写一句「通知调度失败」，
+                        // 真机日志里 100 条一模一样的行**完全无法归因**（2026-09-22）——
+                        // 第②类「做了事但没做成」的留痕，必须能回答「为什么没成」。
+                        let nsError = error as NSError
+                        try? await self.logStore?.append(
+                            category: .system,
+                            level: .error,
+                            message: "通知调度失败｜\(nsError.domain) \(nsError.code)｜\(nsError.localizedDescription)",
+                            code: "SEAL-NOTIFY-002a"
+                        )
                     }
                 }
             }
@@ -616,22 +634,38 @@ final class AppsViewModel: ObservableObject {
             )
             return
         }
-        let controlProbe = await InstalledAppDeviceVerifier.probe(bundleIdentifier: controlBundleID)
-        let positiveControlPassed = controlProbe == .installed
+        // ⚠️ 对照走**带重试**的核验。真机上这条失败绝大多数是「通道还没起来」：
+        // 2026-09-22 日志里 90 分钟出现 10 次，而**同一条通道 3 秒后就正常了**
+        //（10:21:30 中止 → 10:21:33 完成「探测 2 条，删除 0 条」）。
+        // 原来只问一次 ⇒ 每次都把「还没起来」当成「通道不可信」⇒
+        // 用户一下拉刷新就吃一个弹窗（用户原话：「有时候刷新还是出现弹窗让去检测VPN」）✗。
+        // 重试判据见 `InstalledAppProbeRetryPolicy`（只重试快速失败、且有次数上限）。
+        let control = await InstalledAppDeviceVerifier.probeResilient(bundleIdentifier: controlBundleID)
+        let positiveControlPassed = control.probe == .installed
+        if control.attempts > 1, positiveControlPassed {
+            // 重试救回来的一次也要留痕：否则「弹窗变少了」到底是重试起效、
+            // 还是通道恰好一直健康，事后完全分不出来。
+            try? await logStore?.append(
+                category: .installation,
+                level: .info,
+                message: "已安装列表对账：阳性对照第 \(control.attempts) 次尝试才通过"
+                    + "（前 \(control.attempts - 1) 次通道未就绪，合计 \(Self.secondsText(control.totalElapsed))）",
+                code: "SEAL-RECONCILE-006"
+            )
+        }
         guard positiveControlPassed else {
             try? await logStore?.append(
                 category: .installation,
                 level: .warning,
                 message: "已安装列表对账中止：阳性对照未通过"
-                    + "（\(controlBundleID)：\(controlProbe.logName)），本轮不删除任何记录",
+                    + "（\(controlBundleID)：\(control.probe.logName)，"
+                    + "尝试 \(control.attempts) 次，末次耗时 \(Self.secondsText(control.elapsed))），"
+                    + "本轮不删除任何记录",
                 code: "SEAL-RECONCILE-003"
             )
             if userInitiated {
-                alertFailure = ImportFailure(
-                    title: "\u{65E0}\u{6CD5}\u{5237}\u{65B0}\u{5DF2}\u{5B89}\u{88C5}\u{5E94}\u{7528}",
-                    reason: "\u{672A}\u{80FD}\u{4ECE}\u{8BBE}\u{5907}\u{8BFB}\u{53D6}\u{771F}\u{5B9E}\u{5DF2}\u{5B89}\u{88C5}\u{5E94}\u{7528}\u{72B6}\u{6001}\u{3002}",
-                    recovery: "\u{91CD}\u{65B0}\u{8FDE}\u{63A5}\u{624B}\u{673A}\u{5E76}\u{5B8C}\u{6210}\u{914D}\u{5BF9}\u{540E}\u{91CD}\u{8BD5}",
-                    code: "SEAL-INSTALL-707"
+                alertFailure = Self.reconcileAbortFailure(
+                    detail: "\(control.probe.logName)，末次耗时 \(Self.secondsText(control.elapsed))"
                 )
             }
             return
@@ -655,12 +689,7 @@ final class AppsViewModel: ObservableObject {
                     code: "SEAL-RECONCILE-004"
                 )
                 if userInitiated {
-                    alertFailure = ImportFailure(
-                        title: "\u{65E0}\u{6CD5}\u{5237}\u{65B0}\u{5DF2}\u{5B89}\u{88C5}\u{5E94}\u{7528}",
-                        reason: "\u{672A}\u{80FD}\u{4ECE}\u{8BBE}\u{5907}\u{8BFB}\u{53D6}\u{771F}\u{5B9E}\u{5DF2}\u{5B89}\u{88C5}\u{5E94}\u{7528}\u{72B6}\u{6001}\u{3002}",
-                        recovery: "\u{91CD}\u{65B0}\u{8FDE}\u{63A5}\u{624B}\u{673A}\u{5E76}\u{5B8C}\u{6210}\u{914D}\u{5BF9}\u{540E}\u{91CD}\u{8BD5}",
-                        code: "SEAL-INSTALL-707"
-                    )
+                    alertFailure = Self.reconcileAbortFailure(detail: "\(bundleIdentifier) 查询失败")
                 }
                 return
             }
@@ -2459,6 +2488,41 @@ final class AppsViewModel: ObservableObject {
             return AppsViewModel(apps: [], draft: draft)
         }
         return nil
+    }
+
+    /// 「本轮读不到设备状态 ⇒ 一条都没删」时给用户看的东西。
+    ///
+    /// ⚠️ **两个刻意的选择**（2026-09-22 用户报「刷新时弹窗让去检测 VPN」之后改的）：
+    ///
+    /// 1. `recovery` 固定为「知道了」⇒ 按钮**只关弹窗、不做任何跳转**。
+    ///    这是 `performAlertRecovery` 里的既有约定
+    ///   （`guard recovery != "知道了" else { return }`）。
+    ///    原来这里给的是「重新连接手机并完成配对后重试」，而 `settingsRoute` 对
+    ///    `SEAL-INSTALL-` 前缀一律路由到 **LocalDevVPN 设置页** ⇒ 用户一下拉刷新
+    ///    就被推进 VPN 页面。可**实际上什么都没坏**：列表已经从本地库刷新过了，
+    ///    只是「设备端核销」这一轮跳过了 —— 而且真机实测通道 3 秒后就恢复
+    ///    （见 `InstalledAppProbeRetryPolicy` 的说明）。
+    /// 2. 文案必须说清「本轮未改动任何记录」与「稍后会自动重试」。
+    ///    把这种**暂时性**的读不到写成「失败」，用户会以为数据出了问题。
+    ///
+    /// 仍然保留弹窗（而不是彻底静默）是因为：用户**主动**刷新时，如果设备状态读不到，
+    /// 「列表里可能还留着已卸载的 App」这件事必须让用户知情。
+    static func reconcileAbortFailure(detail: String) -> ImportFailure {
+        ImportFailure(
+            title: "暂时读不到设备状态",
+            reason: "未能从设备读取真实已安装应用状态（\(detail)），"
+                + "本轮未改动任何记录，已安装列表保持原样。\n"
+                + "常见于刚启动、或 LocalDevVPN 尚未连上，稍后会自动重试；"
+                + "若一直如此，请到「设置」里确认 LocalDevVPN 已连接。",
+            recovery: "知道了",
+            code: "SEAL-INSTALL-707"
+        )
+    }
+
+    /// 日志里的耗时文案（如 `0.3 秒`）。把「快速失败」与「撞满超时」在日志里分开，
+    /// 是这条链路唯一能回答「到底是通道还没起来、还是会话已经死了」的手段。
+    private static func secondsText(_ seconds: TimeInterval) -> String {
+        String(format: "%.1f 秒", seconds)
     }
 
     private static let connectionRecoveryReason = "请确认已连接 Wi-Fi 并开启 LocalDevVPN。若长时间无响应，请在设置中确认 LocalDevVPN 已连接后重试。"

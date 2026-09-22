@@ -2420,12 +2420,15 @@ final class SettingsViewModel: ObservableObject {
             }
             notificationPreferences.isEnabled = enabled
             notificationsEnabled = enabled
-            try await notificationScheduler.reschedule(
+            let decision = try await notificationScheduler.reschedule(
                 apps: try await appStore.fetchAll(),
                 enabled: enabled,
                 leadHours: reminderHours
             )
-            notificationStatus = await notificationScheduler.status(sealEnabled: enabled)
+            notificationStatus = await notificationScheduler.status(
+                sealEnabled: enabled,
+                schedulingFailure: Self.schedulingSkipReason(decision)
+            )
         } catch let failure as ImportFailure {
             notificationStatus = await notificationScheduler.status(
                 sealEnabled: notificationPreferences.isEnabled,
@@ -2456,12 +2459,15 @@ final class SettingsViewModel: ObservableObject {
         reminderHours = NotificationPreferences.fixedLeadHours
         notificationPreferences.leadHours = NotificationPreferences.fixedLeadHours
         do {
-            try await notificationScheduler.reschedule(
+            let decision = try await notificationScheduler.reschedule(
                 apps: try await appStore.fetchAll(),
                 enabled: notificationsEnabled,
                 leadHours: NotificationPreferences.fixedLeadHours
             )
-            notificationStatus = await notificationScheduler.status(sealEnabled: notificationsEnabled)
+            notificationStatus = await notificationScheduler.status(
+                sealEnabled: notificationsEnabled,
+                schedulingFailure: Self.schedulingSkipReason(decision)
+            )
         } catch {
             alertFailure = Self.failure(
                 title: "无法设置提醒",
@@ -2654,6 +2660,25 @@ final class SettingsViewModel: ObservableObject {
         code: "SEAL-INSTALL-706a"
     )
 
+
+    /// 把「本次没有真的去排」翻译成设置页能直接显示的一句话。
+    ///
+    /// 返回 `nil` = **没有需要说明的失败**（排成功了，或用户自己把开关关了）。
+    /// 只有「系统没给通知权限」这一种要说明 —— 它是用户**看不见但必须知道**的状态：
+    /// App 里的开关是开的，提醒却永远不会响。
+    ///
+    /// 顺带把这类状态从「每次刷新一条 error 日志」里摘出来：它是**条件不满足**（第③类），
+    /// 不是「做了事但没做成」（第②类）。判据见 `ExpiryNotificationSchedulingPolicy`。
+    private static func schedulingSkipReason(
+        _ decision: ExpiryNotificationSchedulingPolicy.Decision
+    ) -> String? {
+        switch decision {
+        case .schedule, .skipDisabled:
+            return nil
+        case .skipNotAuthorized:
+            return "系统未授予通知权限，到期提醒不会送达。请在系统设置中允许 Seal 发送通知。"
+        }
+    }
 
     private static func failure(
         title: String,
