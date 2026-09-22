@@ -65,6 +65,10 @@ final class AppsViewModel: ObservableObject {
     private var signingTask: Task<Void, Never>?
     private var batchRefreshTask: Task<Void, Never>?
     private var channelTask: Task<Bool, Never>?
+    /// 「已安装列表对账」的**单飞闸门**（见 `reconcileInstalledAppsWithDevice`）。
+    /// 该函数有三个触发点（启动 / 回到前台 / 下拉刷新），而每次探测是一条最长 15 秒、
+    /// **不可取消**的同步 FFI ⇒ 并发跑只会互相拖慢，且各自独立下结论。
+    private var isReconcilingInstalledApps = false
     /// 「撤销并继续签名」（SEAL-CERT-204e）确认后，因证书被撤而失效、待自动重签的已装 App。
     /// 仅本次签名重试成功后才会消费；重试失败时清空并提示手动续签。
     private var certificateSacrificeResignQueue: [UUID] = []
@@ -556,27 +560,72 @@ final class AppsViewModel: ObservableObject {
         await reconcileInstalledAppsWithDevice(userInitiated: userInitiated)
     }
 
+    /// 与设备对账「记录里的 App 是否还装着」，**不在了才删**本地记录与文件。
+    ///
+    /// ⚠️ 这条路径 2026-09-21 之前是**静默删数据**：设备查询失败被读成「没装」
+    /// （`RustInstProxy.lookup` 把 RPC 失败折成 nil），于是冷启动时通道还没就绪
+    /// ⇒ 每条都答「没装」⇒ 整个已安装列表被删（连 Seal 自己都没了），
+    /// 而且**不弹窗、不报错、日志里一行都没有**。
+    ///
+    /// 现在照抄描述文件回收路径（`DeviceProfileCleaner` / `ProfileReclaimPolicy`）
+    /// 的三件套：**阳性对照 / 失败即中止整轮 / 决策走纯函数**。
+    /// 两条路径调的是**同一个** `Minimuxer.isAppInstalled`，安全网必须同样完整。
     private func reconcileInstalledAppsWithDevice(userInitiated: Bool) async {
         let installedRecords = installedApps
         guard installedRecords.isEmpty == false else { return }
+
+        // ⚠️ **单飞**：本函数有三个触发点 —— 启动（`AppsRootView` 的 `.task`）、
+        // 每次回到前台（`scenePhase == .active`）、下拉刷新。
+        // 而每次探测是一条最长 15 秒、**不可取消**的同步 FFI
+        //（`BlockingCall.bounded` 只是放弃等待，底层仍在跑）。
+        // 并发跑时它们互相拖慢，且每一条都用同一条（可能不健康的）通道**独立下结论**
+        // ⇒ 结论还会互相矛盾。
+        // 早退而不是排队：后到的那次刷新拿到的就是前一次的结论，重复跑没有新信息。
+        guard isReconcilingInstalledApps == false else {
+            try? await logStore?.append(
+                category: .installation,
+                level: .info,
+                message: "已安装列表对账跳过：上一轮仍在进行",
+                code: "SEAL-RECONCILE-001"
+            )
+            return
+        }
+        isReconcilingInstalledApps = true
+        defer { isReconcilingInstalledApps = false }
 
         // 导入与已安装 IPA 相同（签名后的 Bundle ID 一致）会残留多条相同身份的记录，
         // iOS 无法并存同 Bundle ID 的应用，这里按身份合并去重，只保留真实存在的一条。
         await removeDuplicateInstalledRecords(installedRecords)
 
-        do {
-            for app in installedRecords {
-                guard let bundleIdentifier = installedBundleIdentifier(for: app) else { continue }
-
-                let existsOnDevice = try await InstalledAppDeviceVerifier.isInstalled(
-                    bundleIdentifier: bundleIdentifier
-                )
-
-                if existsOnDevice == false {
-                    _ = await delete(app)
-                }
-            }
-        } catch {
+        // ── ① **阳性对照**（整条路径的安全底线）──────────────────────────────
+        // Seal 自己**正在运行** ⇒ 它一定装着。先拿它去问：答的不是「已安装」
+        // 就说明这条通道此刻在撒谎 ⇒ 本轮**一条记录都不许删**。
+        //
+        // ⚠️ 这不是防御性编程，是**真机上发生过的**：守卫 `R44` 注释里留着 2026-09-19
+        // 的日志「阳性对照未通过（com.mjorb.seal.CT8QZ7352B 被答成未安装）」；
+        // 构建 175 实测失败集中在**刚启动**（冷启动后 22 秒 / 自替换重启后 60 秒），
+        // 16 秒后再跑就正常 ⇒ **启动早期通道还没就绪**。
+        // 而这条路径恰好就在启动时跑 ⇒ 没有对照就等于「每次冷启动清空列表」。
+        guard let controlBundleID = Bundle.main.bundleIdentifier,
+              controlBundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            try? await logStore?.append(
+                category: .installation,
+                level: .warning,
+                message: "已安装列表对账中止：取不到自身 Bundle ID，无法做阳性对照",
+                code: "SEAL-RECONCILE-002"
+            )
+            return
+        }
+        let controlProbe = await InstalledAppDeviceVerifier.probe(bundleIdentifier: controlBundleID)
+        let positiveControlPassed = controlProbe == .installed
+        guard positiveControlPassed else {
+            try? await logStore?.append(
+                category: .installation,
+                level: .warning,
+                message: "已安装列表对账中止：阳性对照未通过"
+                    + "（\(controlBundleID)：\(controlProbe.logName)），本轮不删除任何记录",
+                code: "SEAL-RECONCILE-003"
+            )
             if userInitiated {
                 alertFailure = ImportFailure(
                     title: "\u{65E0}\u{6CD5}\u{5237}\u{65B0}\u{5DF2}\u{5B89}\u{88C5}\u{5E94}\u{7528}",
@@ -585,7 +634,68 @@ final class AppsViewModel: ObservableObject {
                     code: "SEAL-INSTALL-707"
                 )
             }
+            return
         }
+
+        // ── ② 探测：先问完全部记录，再决定删谁 ────────────────────────────
+        // **必须分两轮**：边问边删时，「通道在问到第 5 条时坏掉」会让前 4 条已经被删掉，
+        // 而它们恰恰是通道还健康时问出来的 —— 但已经收不回来。
+        var probes: [(app: AppRecord, probe: ProfileReclaimPolicy.InstallProbe)] = []
+        for app in installedRecords {
+            // Seal 自身由 `SelfAppRegistrar` 管理，永远不在这条删除路径上
+            //（与 `removeDuplicateInstalledRecords` 里的同一句话保持一致）。
+            guard app.isSeal == false else { continue }
+            guard let bundleIdentifier = installedBundleIdentifier(for: app) else { continue }
+            let probe = await InstalledAppDeviceVerifier.probe(bundleIdentifier: bundleIdentifier)
+            if probe == .unavailable {
+                try? await logStore?.append(
+                    category: .installation,
+                    level: .warning,
+                    message: "已安装列表对账中止：\(bundleIdentifier) 查询失败，本轮不删除任何记录",
+                    code: "SEAL-RECONCILE-004"
+                )
+                if userInitiated {
+                    alertFailure = ImportFailure(
+                        title: "\u{65E0}\u{6CD5}\u{5237}\u{65B0}\u{5DF2}\u{5B89}\u{88C5}\u{5E94}\u{7528}",
+                        reason: "\u{672A}\u{80FD}\u{4ECE}\u{8BBE}\u{5907}\u{8BFB}\u{53D6}\u{771F}\u{5B9E}\u{5DF2}\u{5B89}\u{88C5}\u{5E94}\u{7528}\u{72B6}\u{6001}\u{3002}",
+                        recovery: "\u{91CD}\u{65B0}\u{8FDE}\u{63A5}\u{624B}\u{673A}\u{5E76}\u{5B8C}\u{6210}\u{914D}\u{5BF9}\u{540E}\u{91CD}\u{8BD5}",
+                        code: "SEAL-INSTALL-707"
+                    )
+                }
+                return
+            }
+            probes.append((app, probe))
+        }
+
+        // ── ③ 决策走纯函数 ────────────────────────────────────────────────
+        // `InstalledAppReconcilePolicy.decision` 要求「答未安装」必须**问过阳性对照**
+        // 才允许删 —— 单测与守卫都钉在这一句上，别在调用点改成字面量 true。
+        var removedCount = 0
+        for entry in probes {
+            switch InstalledAppReconcilePolicy.decision(
+                probe: entry.probe,
+                positiveControlPassed: positiveControlPassed
+            ) {
+            case .keepInstalled:
+                continue
+            case .removeRecord:
+                if await delete(entry.app) { removedCount += 1 }
+            case .abortPass:
+                // 走不到这里：`.unavailable` 在上面就已经整轮返回了。
+                // 保留这个分支是为了让「决策函数的三个分支都被显式处理」在形状上成立 ——
+                // 将来有人把上面的拦截挪走时，不会静默漏掉一种结果。
+                return
+            }
+        }
+
+        // 有结论就留痕：这条路径此前是**静默**的（不弹窗、不写日志），
+        // 用户只能看到 App 凭空消失，排查时连「跑没跑过」都无从判断。
+        try? await logStore?.append(
+            category: .installation,
+            level: .info,
+            message: "已安装列表对账完成：探测 \(probes.count) 条，删除 \(removedCount) 条",
+            code: "SEAL-RECONCILE-005"
+        )
     }
 
     private func installedBundleIdentifier(for app: AppRecord) -> String? {

@@ -576,6 +576,74 @@
 
 ## 历史记录
 
+### 2026-09-21 · 已安装列表「静默删数据」：把描述文件回收的三件套补到对账路径
+
+**用户报告**（iOS 16.2，Lockdown 通道）：「已安装页下拉刷新有 BUG，16 系统会导致相册崩溃、
+照片全无、打开白屏、甚至闪退」。追问后收敛为：**已安装列表全没了，包括 Seal 自己**，
+**系统「照片」App 与设备存储无关**。
+
+**先做证伪（系统「照片」）**：Seal **碰不到**系统相册，四条独立证据 ——
+① `project.yml` 只有 `NSPhotoLibraryAddUsageDescription`（**add-only 读不了也删不了**）；
+② `DCIM` / `/var/mobile` / `PhotoData` / `Media/` / `Photos.sqlite` 在 `Seal/` 里**零命中**；
+③ `Seal.entitlements` **为空**，无 app group、无共享容器、无 `UserDefaults(suiteName:)`；
+④ 两处碰相册的代码（选图标用系统进程外 `photosPicker`；存赞赏码用
+`UIImageWriteToSavedPhotosAlbum`）**都不在刷新链路上**。⇒ **两者是独立的两件事，不猜。**
+
+**根因链（缺一不可，`665ed21` 逐行核对）**：
+
+1. Rust 侧 `_rust_bridge_instproxy_lookup` 把「查询失败」与「没查到」返回成**同一个空指针**
+   （`match c.0.lookup(...)` 的 `Err(_)` 与 `dict_get_item` 的 `Err(_)` 都 `std::ptr::null_mut()`）；
+2. `RustInstProxy.lookup` 再把它折成 `nil`；
+3. 设备核验原来只交出 `Bool`（`!= nil` 判存在）⇒ **查询失败 = 「未安装」**（fail **open**）；
+4. `reconcileInstalledAppsWithDevice` 对每条 `false` 直接 `delete(app)`
+   ⇒ 删记录 **＋ 删 `Documents/Apps/<UUID>` 里的 IPA**，且循环里**没有 `isSeal` 过滤**
+   ⇒ **Seal 自己也在被删之列**。
+
+**触发时机**（这是「为什么每次冷启动都中招」的答案）：构建 175 真机实测，探测失败集中在
+**刚启动**（冷启动后 22 秒 / 自替换重启后 60 秒），16 秒后再跑就正常
+⇒ **启动早期通道还没就绪**。而这条路径恰好就在启动时跑（`AppsRootView` 的 `.task`）。
+⇒ 用户说的「删 Seal 后台再打开」正是这个时机，与代码完全对上。
+
+**分流核实**（决定「哪条分支」）：配对文件有 `private_key` ⇒ RPPairing（会抛错、fail-closed ✓）；
+有 `UDID` ⇒ **Lockdown**（走 `RustInstProxy` —— 也就是会折 nil 的那条）。
+iOS 16.2 + Lockdown 配对文件正好走后者。
+
+**决定性对照 —— 这个坑项目早就解决过，只解决了一半**：
+
+| 保护 | 描述文件回收（2026-09-17） | 已安装列表（本轮前） |
+|---|---|---|
+| 阳性对照（拿 Seal 自己问） | ✓ | ✗ |
+| 失败即**中止整轮** | ✓ | ✗ 逐条 continue |
+| 纯函数 ＋ 单测 | ✓ | ✗ **零单测** |
+| 失败留痕 | ✓ | ✗ **连日志都不写** |
+| 守卫断言 | **24 条** | **0 条** |
+
+两条路径调的是**同一个** `Minimuxer.isAppInstalled`。项目自己的真机日志就是最硬的证据：
+守卫 `R44` 注释里留着 2026-09-19 的
+「**阳性对照未通过（`com.mjorb.seal.CT8QZ7352B` 被答成未安装）**」
+⇒ 这台设备**确实会把「Seal 自己」答成没装**。描述文件路径靠这句话整轮不删 ✓，
+已安装列表把**同一个答案**当成了「删」✗✗ ——
+**「连 Seal 自己都没了」不是巧合，它就是阳性对照该拦下的那个信号。**
+
+**修复（照抄描述文件路径的三件套）**：
+
+| 位置 | 改了什么 |
+|---|---|
+| `Seal/Core/Maintenance/InstalledAppReconcilePolicy.swift`（**新增**） | 决策纯函数 `decision(probe:positiveControlPassed:)`，三态 → `.removeRecord` / `.keepInstalled` / `.abortPass`；复用 `ProfileReclaimPolicy.InstallProbe`（两条路径问的是同一个 API，三态定义不该有两份） |
+| `InstalledAppDeviceVerifier` | `isInstalled(…) -> Bool` **删除**，改为 `probe(…) -> ProfileReclaimPolicy.InstallProbe` —— 把三态交出去，调用方**没有机会**把失败读成「否」 |
+| `AppsViewModel.reconcileInstalledAppsWithDevice` | ① **阳性对照**（`Bundle.main.bundleIdentifier`，Seal 正在运行 ⇒ 一定装着）；② 失败即**整轮中止**；③ **探测与删除分两轮**；④ `app.isSeal == false` 过滤；⑤ **单飞闸门** `isReconcilingInstalledApps`；⑥ 五个日志码 `SEAL-RECONCILE-001…005` 留痕 |
+| `SealTests/Maintenance/InstalledAppReconcilePolicyTests.swift`（**新增**） | 7 个用例，含「对照没过一份都不删」「查询失败中止整轮」「中止是全局的」 |
+| `Scripts/verify-release-safety.py` | 新增 **R71**：12 条断言 ＋ 6 条变异锚点（源码断言只能证明函数存在，证明不了行为） |
+
+**顺带查实（都不是 bug，免得重复审）**：`Install.resetProvider()` **不碰** `isrppairing`
+（一度怀疑它会把 Lockdown 路径带偏，核实后不成立）；`SigningCoordinator:1049` 把 `mapped` 与
+`preferred` **都**设为设备上的映射后 ID ⇒「ID 不匹配导致全判未装」**不成立** ✓；
+列表渲染用快照判分隔线，无越界；`#available` 全仓仅 3 处且都有兜底 ⇒ iOS 16.2 只走 else 分支，
+**只有视觉差异、无崩溃风险**。
+
+**验证状态**：本地守卫 `Source regression checks: 507` / `Guard mutation checks: 261` /
+**PASS** ✓；单测与编译待 CI（本机无 Swift/Xcode）。
+
 ### 2026-09-21 · iOS 16.2 真机日志诊断：给「安装通道检测」补上中间态留痕
 
 **输入**：`Seal-log (11).txt`（表头 `构建 1.2.1 (196)`，iOS 16.2 **已越狱**设备，19:24–19:35，27 行）。

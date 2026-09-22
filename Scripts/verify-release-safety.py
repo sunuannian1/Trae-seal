@@ -3640,6 +3640,97 @@ def violations(load=read):
           "R70: 逐步状态的可读性必须有**真单测** ✗ —— "
           "日志里那行「卡在哪一步」是这条链路唯一的排障手段，不能只靠源码断言")
 
+    # R71: 已安装列表的「设备对账 ⇒ 删记录」路径 —— 与描述文件回收（R11）**同源**的安全网。
+    #
+    # 用户报（2026-09-21，iOS 16.2 / Lockdown 通道）：「下拉刷新 / 杀掉 Seal 后台再打开之后，
+    # 已安装列表**全没了**，**连 Seal 自己都没了**」，而且**不弹窗、不报错、日志里一行都没有**。
+    #
+    # 根因：Rust 侧 `_rust_bridge_instproxy_lookup` 把「查询失败」与「没查到」返回成
+    # **同一个空指针**，`RustInstProxy.lookup` 再折成 nil，而设备核验原来只交出 Bool
+    # ⇒ **查询失败被读成「没装」**（fail open）⇒ 对每条 false 直接 `delete(app)`
+    #（删记录 **＋ 删 `Documents/Apps/<UUID>` 里的 IPA**），且那个循环里没有 `isSeal` 过滤。
+    # 冷启动时通道还没就绪（构建 175 真机实测：失败集中在冷启动后 22 秒）
+    # ⇒ **每次冷启动都会把整个列表删干净**。
+    #
+    # ⚠️ 这不是新问题：描述文件回收路径 2026-09-17 踩过**同一个**坑，当时定下的三件套
+    #（阳性对照 / 失败即中止整轮 / 决策是纯函数）只落在那条路径上。
+    # 两条路径调的是**同一个** `Minimuxer.isAppInstalled` —— 这里补上另一半。
+    # ⚠️ 真机证据（同一条通道、同一台设备）：守卫 `R44` 注释里留着 2026-09-19 的日志
+    # 「阳性对照未通过（com.mjorb.seal.CT8QZ7352B 被答成未安装）」⇒ 这台设备**确实会**
+    # 把「Seal 自己」答成没装。描述文件路径靠这句话整轮不删 ✓；
+    # 已安装列表路径把**同一个答案**当成了「删」✗✗ —— 用户说的「连 Seal 自己都没了」
+    # 正是**阳性对照该拦下的那个信号**，不是巧合。
+    reconcile_policy = strip_comments(
+        load("Seal/Core/Maintenance/InstalledAppReconcilePolicy.swift")
+    )
+    reconcile_decision = squash(section_or_empty(
+        reconcile_policy, "static func decision(", "\n}"
+    ))
+    check("case .unavailable: return .abortPass" in reconcile_decision,
+          "R71: 查询失败绝不能被读成没装")
+    check("case .installed: return .keepInstalled" in reconcile_decision,
+          "R71: 设备上确实装着的记录必须保留")
+    check("return positiveControlPassed ? .removeRecord : .abortPass" in reconcile_decision,
+          "R71: 删记录必须先问过阳性对照")
+
+    apps_vm = strip_comments(load("Seal/Features/Apps/AppsViewModel.swift"))
+    reconcile_body = section_or_empty(
+        apps_vm,
+        "private func reconcileInstalledAppsWithDevice(",
+        "private func installedBundleIdentifier("
+    )
+    check("guard isReconcilingInstalledApps == false else {" in reconcile_body,
+          "R71: 已安装列表对账必须单飞")
+    check("let controlProbe = await InstalledAppDeviceVerifier.probe(bundleIdentifier: controlBundleID)"
+          in reconcile_body,
+          "R71: 阳性对照必须真的去问设备")
+    check("let positiveControlPassed = controlProbe == .installed" in reconcile_body,
+          "R71: 阳性对照必须是真的设备查询结果")
+    check("guard positiveControlPassed else {" in reconcile_body,
+          "R71: 阳性对照没过必须整轮不删")
+    check("InstalledAppReconcilePolicy.decision(" in reconcile_body
+          and "positiveControlPassed: positiveControlPassed" in reconcile_body,
+          "R71: 删不删必须走决策纯函数，且把对照结果真的传进去（不能写字面量 true）")
+    check("guard app.isSeal == false else { continue }" in reconcile_body,
+          "R71: Seal 自身不在这条删除路径上")
+    check("SEAL-RECONCILE-001" in reconcile_body
+          and "SEAL-RECONCILE-003" in reconcile_body
+          and "SEAL-RECONCILE-004" in reconcile_body,
+          "R71: 跳过与中止都必须留痕 —— 这条路径此前是静默删数据（不弹窗、不写日志）")
+    # `.abortPass` 必须**中止整轮**，而不是只跳过当前这一条。只跳过的话，
+    # 后面的记录会继续被一条已经不可信的通道「判定」并删除 ——
+    # 代码看起来仍然「有中止逻辑」，是最难发现的一种退化。
+    abort_body = section_or_empty(
+        reconcile_body, "if probe == .unavailable {", "probes.append((app, probe))"
+    )
+    check("return" in abort_body,
+          "R71: 查询失败必须中止整轮")
+    # 阳性对照必须在**删任何一条之前**跑完。
+    control_at = reconcile_body.find("InstalledAppDeviceVerifier.probe(bundleIdentifier: controlBundleID)")
+    remove_at = reconcile_body.find("await delete(")
+    check(control_at != -1 and remove_at != -1 and control_at < remove_at,
+          "R71: 阳性对照必须在删任何一条之前跑完")
+
+    # 设备核验必须交出**三态**：Bool 版会被调用方一句 `try?` 加默认值折成 false
+    # ⇒ 又回到「查询失败 = 没装 = 删数据」。
+    verifier = strip_comments(load("Seal/Features/Apps/InstalledAppDeviceVerifier.swift"))
+    check("static func probe(bundleIdentifier: String) async -> ProfileReclaimPolicy.InstallProbe"
+          in verifier,
+          "R71: 设备核验必须交出三态")
+    check("guard let outcome else { return .unavailable }" in verifier
+          and "return try outcome.get() ? .installed : .notInstalled" in verifier,
+          "R71: 超时与抛错都必须落成 .unavailable，绝不能落成「没装」")
+    check("-> Bool" not in verifier,
+          "R71: 不要再提供 Bool 版核验 —— 调用方一句 try? 加默认值就把失败读成了没装")
+
+    # 源码断言只能证明函数存在，证明不了**行为**（判据被删空 ⇒ 仍然全绿）。
+    reconcile_tests = load("SealTests/Maintenance/InstalledAppReconcilePolicyTests.swift")
+    check("func failedProbeAbortsTheWholePassInsteadOfRemoving()" in reconcile_tests
+          and "func failedPositiveControlNeverRemoves()" in reconcile_tests
+          and "func installedRecordIsAlwaysKept()" in reconcile_tests
+          and "func abortPassStopsTheWholePass()" in reconcile_tests,
+          "R71: 这四条判据必须有真单测 —— 「静默删数据」的错法只有单测能钉住")
+
     handoff_failures = HANDOFF_GUARD["violations"](load)
     checks += 6
     failures.extend(handoff_failures)
@@ -5268,6 +5359,42 @@ def main():
          'test "$TARGET" = "16.0"',
          'test "$TARGET" = "17.0"',
          "R68:"),
+        # ── R71：已安装列表对账的删除路径（2026-09-21 用户报「列表全没了、连 Seal 自己都没了」）──
+        # 把「删记录」退回「不问阳性对照」：隧道抖动 / 冷启动通道未就绪时全部答成未安装
+        # ⇒ 整个列表（含 Seal 自己）被删，而且不弹窗、不写日志 ✓ 报红。
+        ("Seal/Core/Maintenance/InstalledAppReconcilePolicy.swift",
+         "            return positiveControlPassed ? .removeRecord : .abortPass",
+         "            return .removeRecord",
+         "R71: 删记录必须先问过阳性对照"),
+        # 把「查询失败」读成「没装」—— 这正是 2026-09-21 那次事故的形态。
+        ("Seal/Core/Maintenance/InstalledAppReconcilePolicy.swift",
+         "        case .unavailable:\n            return .abortPass",
+         "        case .unavailable:\n            return .removeRecord",
+         "R71: 查询失败绝不能被读成没装"),
+        # 阳性对照恒通过（把对照结果写成字面量 true）—— 对照形同虚设，
+        # 通道不可信时照样全删。形态判据与单测都还在，代码看起来完全正常。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "        let positiveControlPassed = controlProbe == .installed",
+         "        let positiveControlPassed = true",
+         "R71: 阳性对照必须是真的设备查询结果"),
+        # 去掉 Seal 自身的排除：Seal 自己的记录重新进入删除路径
+        #（用户看到的现象就是「连 Seal 自己都没了」）。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "            guard app.isSeal == false else { continue }",
+         "            guard true else { continue }",
+         "R71: Seal 自身不在这条删除路径上"),
+        # 去掉单飞闸门：三个触发点（启动 / 回到前台 / 下拉刷新）叠着跑，
+        # 各自用同一条可能不健康的通道独立下结论。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "        guard isReconcilingInstalledApps == false else {",
+         "        guard true else {",
+         "R71: 已安装列表对账必须单飞"),
+        # 把「整轮中止」降级成「只跳过当前这条」：后面的记录继续被一条已经不可信的
+        # 通道判定并删除 —— 代码看起来仍然「有中止逻辑」，最难发现的一种退化。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "                return\n            }\n            probes.append((app, probe))",
+         "                continue\n            }\n            probes.append((app, probe))",
+         "R71: 查询失败必须中止整轮"),
     ]
     # 变异检查每一遍都会把所有源文件**重新读一遍**：200+ 文件 × 90 多遍 ≈ 2 万次磁盘读。
     # 本仓在 OneDrive 同步目录里，单次读延迟不稳定 —— 实测同一份代码整轮耗时在
